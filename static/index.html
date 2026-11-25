@@ -1,0 +1,1408 @@
+<!DOCTYPE html>
+<html lang="km">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Gold XAU/USD Pro Terminal</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      background: #070b13;
+      color: #f3f4f6;
+      font-family: system-ui, -apple-system, 'Khmer OS Siemreap', sans-serif;
+      -webkit-tap-highlight-color: transparent;
+      overscroll-behavior-y: none;
+    }
+    body {
+      background-image: radial-gradient(circle at 50% 0%, rgba(234, 179, 8, 0.08) 0%, rgba(7, 11, 19, 0) 55%);
+      padding-bottom: calc(2rem + env(safe-area-inset-bottom));
+    }
+    .glass {
+      background: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .tf-btn.active {
+      background: linear-gradient(135deg, #facc15, #ca8a04);
+      color: #080c14;
+      font-weight: 700;
+      box-shadow: 0 2px 10px rgba(234, 179, 8, 0.3);
+    }
+    @keyframes flashGreen { 0% { color: #00e5a8; } 100% { color: #f9fafb; } }
+    @keyframes flashRed { 0% { color: #ff5c7c; } 100% { color: #f9fafb; } }
+    @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+    .tick-up { animation: flashGreen 0.35s ease-out; }
+    .tick-down { animation: flashRed 0.35s ease-out; }
+    .input-shake { animation: shake 0.28s ease-in-out; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    /* Fullscreen Mode (បញ្ឈរ និងផ្តេកលើ iPhone/Android/PC) */
+    #chartCard.is-fullscreen {
+      position: fixed;
+      inset: 0;
+      z-index: 90;
+      width: 100vw;
+      height: 100dvh;
+      border-radius: 0;
+      border: none;
+      background: #070b13;
+      display: flex;
+      flex-direction: column;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+    #chartCard.is-fullscreen #chartStage { flex: 1; height: 100%; }
+    #chartCard.is-fullscreen #chart { height: 100% !important; }
+
+    /* Live Price + Countdown Pill លើអ័ក្សតម្លៃខាងស្តាំ */
+    #axisLivePill {
+      position: absolute;
+      right: 0;
+      z-index: 16;
+      pointer-events: none;
+      min-width: 68px;
+      padding: 2px 6px;
+      border-radius: 4px 0 0 4px;
+      text-align: right;
+      line-height: 1.15;
+      transform: translateY(-50%);
+      transition: top 0.12s linear, background-color 0.2s ease;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Offline Banner -->
+  <div id="offlineBar" class="hidden bg-rose-600 text-white text-center text-[11px] font-semibold py-1.5 px-3">
+    គ្មានការភ្ជាប់អ៊ីនធឺណិត — កំពុងបង្ហាញទិន្នន័យចុងក្រោយពីអង្គចងចាំទូរស័ព្ទ
+  </div>
+
+  <!-- Sticky Header -->
+  <header class="sticky top-0 z-30 glass border-b border-white/10 px-4 py-3">
+    <div class="max-w-5xl mx-auto flex items-center justify-between">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="relative flex h-2 w-2">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span id="wsDot" class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          <h1 class="text-sm sm:text-base font-extrabold tracking-wide text-yellow-400">GOLD XAU/USD</h1>
+          <span id="wsStatus" class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-bold border border-emerald-500/20">LIVE</span>
+          <span id="feedBadge" class="hidden sm:inline-block text-[10px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 font-semibold border border-sky-500/20">--</span>
+        </div>
+        <div class="flex items-center gap-1.5 mt-0.5 text-[11px] text-gray-400">
+          <i data-lucide="database" class="w-3 h-3 text-gray-500"></i>
+          <span id="dataSource">កំពុងភ្ជាប់ Real-time...</span>
+        </div>
+      </div>
+      <div class="text-right">
+        <div id="livePrice" class="text-xl sm:text-2xl font-black tracking-tight tabular-nums">----.--</div>
+        <div id="priceChange" class="text-xs font-semibold tabular-nums text-gray-400">--</div>
+        <div id="bidAskText" class="text-[10px] text-gray-400 tabular-nums mt-0.5">Bid -- • Ask --</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Price Alert Toast -->
+  <div id="alertToast" class="hidden fixed top-16 left-3 right-3 sm:left-auto sm:right-4 sm:w-96 z-50 bg-yellow-400 text-[#080c14] rounded-2xl p-3.5 shadow-2xl border-2 border-white flex items-center justify-between gap-3">
+    <div class="flex items-center gap-2.5">
+      <i data-lucide="bell-ring" class="w-5 h-5 shrink-0"></i>
+      <div>
+        <div class="text-xs font-black uppercase">ដល់តម្លៃគោលដៅហើយ!</div>
+        <div id="alertToastMsg" class="text-xs font-semibold">--</div>
+      </div>
+    </div>
+    <button onclick="document.getElementById('alertToast').classList.add('hidden')" class="p-1 rounded-lg bg-black/15">
+      <i data-lucide="x" class="w-4 h-4"></i>
+    </button>
+  </div>
+
+  <!-- Main Workspace -->
+  <main class="flex-1 max-w-5xl w-full mx-auto px-3 sm:px-4 py-3 space-y-3">
+
+    <!-- USD High-Impact News Bar -->
+    <div id="newsBanner" class="glass rounded-2xl px-3.5 py-2.5 flex items-center justify-between gap-2 text-xs">
+      <div class="flex items-center gap-2 min-w-0">
+        <i data-lucide="calendar-clock" class="w-4 h-4 text-sky-400 shrink-0"></i>
+        <div id="newsText" class="truncate text-gray-300">កំពុងពិនិត្យប្រតិទិនព័ត៌មានសេដ្ឋកិច្ច USD...</div>
+      </div>
+      <span id="newsBadge" class="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-300 font-bold border border-white/10">USD NEWS</span>
+    </div>
+
+    <!-- Timeframe & Checkbox Bar -->
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <div class="flex bg-[#0f172a] p-1 rounded-xl border border-white/10 gap-1 overflow-x-auto no-scrollbar">
+        <button data-tf="5m" onclick="switchInterval('5m')" class="tf-btn px-2.5 sm:px-3 py-1.5 text-xs rounded-lg text-gray-300 transition">5m</button>
+        <button data-tf="15m" onclick="switchInterval('15m')" class="tf-btn px-2.5 sm:px-3 py-1.5 text-xs rounded-lg text-gray-300 transition">15m</button>
+        <button data-tf="1h" onclick="switchInterval('1h')" class="tf-btn px-2.5 sm:px-3 py-1.5 text-xs rounded-lg text-gray-300 transition">1H</button>
+        <button data-tf="4h" onclick="switchInterval('4h')" class="tf-btn px-2.5 sm:px-3 py-1.5 text-xs rounded-lg text-gray-300 transition">4H</button>
+        <button data-tf="1d" onclick="switchInterval('1d')" class="tf-btn px-2.5 sm:px-3 py-1.5 text-xs rounded-lg text-gray-300 transition">1D</button>
+      </div>
+
+      <div class="flex items-center gap-1.5 flex-wrap">
+        <label class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#0f172a] border border-white/10 text-[11px] text-gray-200 cursor-pointer select-none">
+          <input id="chkSignals" type="checkbox" checked onchange="toggleSignals(this.checked)" class="accent-emerald-400 w-3.5 h-3.5 rounded cursor-pointer" />
+          <span>BUY/SELL</span>
+        </label>
+        <label class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#0f172a] border border-white/10 text-[11px] text-gray-200 cursor-pointer select-none">
+          <input id="chkZones" type="checkbox" checked onchange="toggleZones(this.checked)" class="accent-blue-400 w-3.5 h-3.5 rounded cursor-pointer" />
+          <span>Zone</span>
+        </label>
+        <label class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#0f172a] border border-white/10 text-[11px] text-gray-200 cursor-pointer select-none">
+          <input id="chkSlTp" type="checkbox" checked onchange="toggleSlTpLines(this.checked)" class="accent-sky-400 w-3.5 h-3.5 rounded cursor-pointer" />
+          <span>SL/TP</span>
+        </label>
+        <label class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#0f172a] border border-yellow-500/30 text-[11px] text-yellow-200 font-semibold cursor-pointer select-none">
+          <input id="chkAI" type="checkbox" onchange="toggleAISection(this.checked)" class="accent-yellow-400 w-3.5 h-3.5 rounded cursor-pointer" />
+          <span>បង្ហាញ AI</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- PRO CHART CARD (FULLSCREEN PORTRAIT & LANDSCAPE) -->
+    <div id="chartCard" class="relative glass rounded-2xl overflow-hidden shadow-2xl">
+      <div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-white/10 bg-[#0b1120]/90 text-[11px] text-gray-400">
+        <div class="flex items-center gap-2.5 flex-wrap">
+          <div id="fsLiveInfo" class="hidden items-center gap-2 pr-2 border-r border-white/10">
+            <span class="text-xs font-extrabold text-yellow-400">XAU/USD</span>
+            <span id="fsPrice" class="text-xs font-black text-white tabular-nums">--</span>
+          </div>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-0.5 bg-sky-400 rounded"></span>EMA 20</span>
+          <span class="flex items-center gap-1"><span class="w-2.5 h-0.5 bg-amber-400 rounded"></span>EMA 50</span>
+          <button id="toggleInstBtn" onclick="toggleInstLines()" class="px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/25 text-[10px] font-semibold transition">
+            PDH/Asian: OFF
+          </button>
+          <div id="fsTfBar" class="hidden items-center gap-1">
+            <button data-tf="5m" onclick="switchInterval('5m')" class="tf-btn px-2 py-0.5 text-[10px] rounded bg-white/5 text-gray-300">5m</button>
+            <button data-tf="15m" onclick="switchInterval('15m')" class="tf-btn px-2 py-0.5 text-[10px] rounded bg-white/5 text-gray-300">15m</button>
+            <button data-tf="1h" onclick="switchInterval('1h')" class="tf-btn px-2 py-0.5 text-[10px] rounded bg-white/5 text-gray-300">1H</button>
+            <button data-tf="4h" onclick="switchInterval('4h')" class="tf-btn px-2 py-0.5 text-[10px] rounded bg-white/5 text-gray-300">4H</button>
+            <button data-tf="1d" onclick="switchInterval('1d')" class="tf-btn px-2 py-0.5 text-[10px] rounded bg-white/5 text-gray-300">1D</button>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1.5">
+          <div class="hidden sm:flex items-center gap-1 text-[10px] text-gray-400 font-medium">
+            <i data-lucide="clock" class="w-3 h-3 text-yellow-500/80"></i>
+            <span id="sessionText">Session</span>
+          </div>
+          <button onclick="resetChartView()" title="តម្រឹមក្រាហ្វិក"
+            class="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/5 hover:bg-white/15 text-gray-200 border border-white/10 text-[10px] font-medium active:scale-95 transition">
+            <i data-lucide="crosshair" class="w-3 h-3"></i>
+            <span class="hidden sm:inline">តម្រឹម</span>
+          </button>
+          <button id="fsBtn" onclick="toggleFullscreen()" title="មើលពេញអេក្រង់"
+            class="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-yellow-400/15 hover:bg-yellow-400/25 text-yellow-300 border border-yellow-400/35 text-[10px] font-bold active:scale-95 transition">
+            <span id="fsIconEnter" class="flex items-center gap-1"><i data-lucide="maximize" class="w-3.5 h-3.5"></i><span>ពេញអេក្រង់</span></span>
+            <span id="fsIconExit" class="hidden items-center gap-1"><i data-lucide="minimize" class="w-3.5 h-3.5"></i><span>បិទពេញអេក្រង់</span></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Chart Stage + Custom Signal/Zone Canvas Overlay -->
+      <div id="chartStage" class="relative w-full">
+        <div id="chart" class="w-full h-[410px] sm:h-[480px]"></div>
+
+        <!-- Canvas គូរប្រអប់ BUY/SELL ធំៗចំបង្គោលទៀន និងតំបន់ Demand Zone ពណ៌ខៀវ -->
+        <canvas id="signalCanvas" class="pointer-events-none absolute inset-0 z-10"></canvas>
+
+        <!-- ប្រអប់តម្លៃ Live + នាឡិកាបិទទៀនលើជួរតម្លៃខាងស្តាំ -->
+        <div id="axisLivePill" class="hidden bg-[#2962ff] text-white">
+          <div id="pillPrice" class="text-[11px] font-black tabular-nums tracking-tight">----.--</div>
+          <div id="pillTimer" class="text-[9.5px] font-bold tabular-nums opacity-95">--:--</div>
+        </div>
+
+        <!-- ផ្ទាំង HUD Status / Entry / Stop Loss / Take Profit / R:R (ដាក់ជ្រុងស្តាំលើ កុំបាំងសញ្ញាឆ្វេង) -->
+        <div id="chartHud" class="pointer-events-none absolute top-2.5 right-[76px] sm:right-[82px] z-10 w-[134px] sm:w-[154px] rounded-xl bg-[#0b1220]/82 backdrop-blur-md border border-white/15 px-2.5 py-2 shadow-xl text-[10px] sm:text-[11px] space-y-1">
+          <div class="flex items-center justify-between border-b border-white/10 pb-1">
+            <span class="text-gray-400 font-semibold">Status</span>
+            <span id="hudSide" class="font-black text-yellow-400">--</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-gray-400">Entry</span>
+            <span id="hudEntry" class="font-bold text-white tabular-nums">--</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-gray-400">Stop Loss</span>
+            <span id="hudSl" class="font-bold text-rose-400 tabular-nums">--</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-gray-400">Take Profit</span>
+            <span id="hudTp" class="font-bold text-emerald-400 tabular-nums">--</span>
+          </div>
+          <div class="flex items-center justify-between pt-0.5 border-t border-white/10">
+            <span class="text-gray-400">R : R</span>
+            <span id="hudRr" class="font-bold text-sky-300 tabular-nums">--</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="loader" class="absolute inset-0 bg-[#070b13]/85 backdrop-blur-sm flex flex-col items-center justify-center gap-2 text-xs text-yellow-400 z-20">
+        <i data-lucide="loader-2" class="w-6 h-6 animate-spin"></i>
+        <span>កំពុងផ្ទុកទិន្នន័យ Real-time...</span>
+      </div>
+    </div>
+
+    <!-- MTF Confluence -->
+    <div class="glass p-3.5 rounded-2xl">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+        <h2 class="flex items-center gap-1.5 text-xs font-bold text-white uppercase tracking-wider">
+          <i data-lucide="git-merge" class="w-3.5 h-3.5 text-yellow-400"></i>
+          <span>ផ្ទៀងផ្ទាត់ 4 Timeframes (MTF Confluence)</span>
+        </h2>
+        <span id="mtfVerdict" class="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-300 font-bold border border-white/10">--</span>
+      </div>
+      <div id="mtfGrid" class="grid grid-cols-4 gap-2"></div>
+      <div id="mtfWarning" class="hidden mt-2.5 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-400/35 text-amber-200 text-[11px] flex items-center gap-2">
+        <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-400 shrink-0"></i>
+        <span id="mtfWarningText"></span>
+      </div>
+    </div>
+
+    <!-- Institutional Key Levels -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+      <div class="glass p-3 rounded-2xl border-t-2 border-t-purple-400/70">
+        <div class="text-[10px] text-gray-400 font-medium">PDH (ខ្ពស់ម្សិលមិញ)</div>
+        <div id="pdhVal" class="mt-0.5 text-base font-extrabold text-purple-300 tabular-nums">--</div>
+      </div>
+      <div class="glass p-3 rounded-2xl border-t-2 border-t-purple-400/70">
+        <div class="text-[10px] text-gray-400 font-medium">PDL (ទាបម្សិលមិញ)</div>
+        <div id="pdlVal" class="mt-0.5 text-base font-extrabold text-purple-300 tabular-nums">--</div>
+      </div>
+      <div class="glass p-3 rounded-2xl border-t-2 border-t-cyan-400/70">
+        <div class="text-[10px] text-gray-400 font-medium">Asian High (00-07 UTC)</div>
+        <div id="asianHighVal" class="mt-0.5 text-base font-extrabold text-cyan-300 tabular-nums">--</div>
+      </div>
+      <div class="glass p-3 rounded-2xl border-t-2 border-t-cyan-400/70">
+        <div class="text-[10px] text-gray-400 font-medium">Asian Low (00-07 UTC)</div>
+        <div id="asianLowVal" class="mt-0.5 text-base font-extrabold text-cyan-300 tabular-nums">--</div>
+      </div>
+    </div>
+
+    <!-- Core Metrics -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+      <div class="glass p-3.5 rounded-2xl">
+        <div class="flex justify-between items-center text-[11px] text-gray-400">
+          <span class="flex items-center gap-1"><i data-lucide="activity" class="w-3 h-3 text-yellow-400"></i>សញ្ញា Pro</span>
+          <span id="confBadge" class="text-[10px] text-yellow-400 font-bold">--%</span>
+        </div>
+        <div id="signalBadge" class="mt-1 text-base sm:text-lg font-black text-gray-300">--</div>
+        <div class="w-full h-1 bg-gray-800 rounded-full mt-2 overflow-hidden">
+          <div id="confBar" class="h-full bg-yellow-400 transition-all duration-500" style="width: 0%"></div>
+        </div>
+      </div>
+      <div class="glass p-3.5 rounded-2xl">
+        <div class="flex items-center gap-1 text-[11px] text-gray-400"><i data-lucide="gauge" class="w-3 h-3 text-sky-400"></i><span>RSI (14) / ATR</span></div>
+        <div id="rsiVal" class="mt-1 text-lg font-extrabold text-white tabular-nums">--</div>
+        <div id="atrVal" class="text-[11px] text-gray-400 mt-0.5">ATR: --</div>
+      </div>
+      <div class="glass p-3.5 rounded-2xl">
+        <div class="flex items-center gap-1 text-[11px] text-gray-400"><i data-lucide="arrow-down-to-line" class="w-3 h-3 text-emerald-400"></i><span>តម្លៃទ្រ (Support)</span></div>
+        <div id="supportVal" class="mt-1 text-lg font-extrabold text-emerald-400 tabular-nums">--</div>
+        <div class="text-[10px] text-emerald-400/70 mt-0.5">តំបន់ទិញសំខាន់</div>
+      </div>
+      <div class="glass p-3.5 rounded-2xl">
+        <div class="flex items-center gap-1 text-[11px] text-gray-400"><i data-lucide="arrow-up-to-line" class="w-3 h-3 text-rose-400"></i><span>តម្លៃទប់ (Resistance)</span></div>
+        <div id="resistanceVal" class="mt-1 text-lg font-extrabold text-rose-400 tabular-nums">--</div>
+        <div class="text-[10px] text-rose-400/70 mt-0.5">តំបន់លក់សំខាន់</div>
+      </div>
+    </div>
+
+    <!-- 6-in-1 Technical Matrix -->
+    <div class="glass p-4 rounded-2xl">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="flex items-center gap-1.5 text-xs font-bold text-white uppercase tracking-wider">
+          <i data-lucide="layers" class="w-3.5 h-3.5 text-yellow-400"></i>
+          <span>តារាងវិភាគសូចនាករស្តង់ដារ (6-in-1 Matrix)</span>
+        </h2>
+        <span class="text-[10px] text-gray-400">អាប់ដេតស្វ័យប្រវត្តិ</span>
+      </div>
+      <div id="techMatrix" class="grid grid-cols-2 sm:grid-cols-3 gap-2"></div>
+    </div>
+
+    <!-- Trade Setup & Lot Calculator -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+      <div class="glass p-4 rounded-2xl border-l-2 border-l-yellow-400">
+        <div class="flex items-center justify-between mb-2.5">
+          <h2 class="flex items-center gap-1.5 text-xs font-bold text-yellow-400 uppercase tracking-wider">
+            <i data-lucide="crosshair" class="w-3.5 h-3.5"></i>
+            <span>ផែនការជួញដូរស្វ័យប្រវត្តិ</span>
+          </h2>
+          <span id="rrVal" class="text-[11px] px-2 py-0.5 rounded-full bg-yellow-400/10 text-yellow-300 font-semibold border border-yellow-400/20">R:R 2:1</span>
+        </div>
+        <div class="grid grid-cols-3 gap-2 text-center mb-3">
+          <div class="bg-black/30 p-2 rounded-xl border border-white/5">
+            <div class="text-[10px] text-gray-400">Stop Loss</div>
+            <div id="slVal" class="text-sm font-bold text-rose-400 tabular-nums">--</div>
+          </div>
+          <div class="bg-black/30 p-2 rounded-xl border border-white/5">
+            <div class="text-[10px] text-gray-400">Take Profit 1</div>
+            <div id="tp1Val" class="text-sm font-bold text-emerald-400 tabular-nums">--</div>
+          </div>
+          <div class="bg-black/30 p-2 rounded-xl border border-white/5">
+            <div class="text-[10px] text-gray-400">Take Profit 2</div>
+            <div id="tp2Val" class="text-sm font-bold text-emerald-300 tabular-nums">--</div>
+          </div>
+        </div>
+        <ul id="reasonsList" class="text-xs text-gray-300 space-y-1.5 list-disc list-inside">
+          <li>កំពុងវិភាគសូចនាករ...</li>
+        </ul>
+      </div>
+
+      <div class="glass p-4 rounded-2xl border-l-2 border-l-sky-400">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="flex items-center gap-1.5 text-xs font-bold text-sky-400 uppercase tracking-wider">
+            <i data-lucide="calculator" class="w-3.5 h-3.5"></i>
+            <span>គណនា Lot Size សុវត្ថិភាព (XAU/USD)</span>
+          </h2>
+          <span class="text-[10px] text-gray-400">តាម SL ជាក់ស្តែង</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2.5 mb-3">
+          <div>
+            <label class="block text-[11px] text-gray-400 mb-1">ដើមទុនគណនី ($ USD)</label>
+            <input id="calcBalance" type="number" min="10" step="10" oninput="updateLotCalc()"
+              class="w-full bg-black/35 border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-semibold focus:outline-none focus:border-sky-400/60" />
+          </div>
+          <div>
+            <label class="block text-[11px] text-gray-400 mb-1">ហានិភ័យក្នុង ១ ជើង (%)</label>
+            <input id="calcRisk" type="number" min="0.5" max="10" step="0.5" oninput="updateLotCalc()"
+              class="w-full bg-black/35 border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-semibold focus:outline-none focus:border-sky-400/60" />
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-2 text-center bg-black/30 p-2.5 rounded-xl border border-white/5">
+          <div>
+            <div class="text-[10px] text-gray-400">ចំនួន Lot ណែនាំ</div>
+            <div id="resLot" class="text-sm font-black text-sky-400 tabular-nums mt-0.5">--</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-gray-400">ទឹកប្រាក់ហានិភ័យ</div>
+            <div id="resRiskUsd" class="text-sm font-bold text-rose-400 tabular-nums mt-0.5">--</div>
+          </div>
+          <div>
+            <div class="text-[10px] text-gray-400">ចម្ងាយ SL</div>
+            <div id="resSlDist" class="text-sm font-bold text-gray-200 tabular-nums mt-0.5">--</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Price Alerts & Trade Journal -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+      <div class="glass p-4 rounded-2xl">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="flex items-center gap-1.5 text-xs font-bold text-amber-300 uppercase tracking-wider">
+            <i data-lucide="bell" class="w-3.5 h-3.5"></i>
+            <span>ដាស់តឿនតម្លៃ (Price Alert មានសំឡេង)</span>
+          </h2>
+          <span class="text-[10px] text-gray-400">រក្សាទុកក្នុងទូរស័ព្ទ</span>
+        </div>
+        <form onsubmit="addPriceAlert(event)" class="flex gap-2 mb-3">
+          <input id="alertPriceInput" type="number" step="0.1" placeholder="បញ្ចូលតម្លៃគោលដៅ (ឧ. 3540)"
+            class="flex-1 bg-black/35 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-amber-400/60" />
+          <button type="submit" class="px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-[#080c14] font-bold text-xs active:scale-95 transition">បន្ថែម</button>
+        </form>
+        <div id="alertList" class="space-y-1.5 text-xs"></div>
+      </div>
+
+      <div class="glass p-4 rounded-2xl">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="flex items-center gap-1.5 text-xs font-bold text-emerald-400 uppercase tracking-wider">
+            <i data-lucide="book-open" class="w-3.5 h-3.5"></i>
+            <span>កំណត់ត្រាជួញដូរ (Trade Journal)</span>
+          </h2>
+          <div class="flex items-center gap-2 text-[11px] font-bold">
+            <span id="jWinRate" class="text-sky-400">Win: 0%</span>
+            <span id="jNetPnl" class="text-gray-300">$0.00</span>
+          </div>
+        </div>
+        <form onsubmit="addJournalEntry(event)" class="grid grid-cols-12 gap-1.5 mb-3">
+          <select id="jSide" class="col-span-3 bg-black/40 border border-white/10 rounded-xl px-2 py-2 text-xs text-white font-semibold">
+            <option value="BUY">BUY</option>
+            <option value="SELL">SELL</option>
+          </select>
+          <input id="jPnl" type="number" step="0.5" placeholder="ចំណេញ/ខាត ($)" required
+            class="col-span-6 bg-black/35 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-emerald-400/60" />
+          <button type="submit" class="col-span-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#080c14] font-bold text-xs active:scale-95 transition">កត់ត្រា</button>
+        </form>
+        <div id="journalList" class="space-y-1.5 max-h-36 overflow-y-auto text-xs"></div>
+      </div>
+    </div>
+
+    <!-- EMBEDDED AI SECTION (នៅខាងក្រោមគេ បើក-បិទតាម Checkbox) -->
+    <section id="aiSection" class="hidden glass rounded-2xl border border-yellow-500/25 overflow-hidden">
+      <div class="bg-gradient-to-r from-yellow-500/15 via-slate-900/60 to-transparent px-4 py-3 border-b border-white/10 flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-xl bg-yellow-400/15 border border-yellow-400/35 flex items-center justify-center text-yellow-400">
+            <i data-lucide="cpu" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-white leading-tight">Gold Quant AI Assistant</h3>
+            <p class="text-[10px] text-emerald-400 font-medium">វិភាគ MTF • USD News • Institutional • មិនបាំងក្រាហ្វិក</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <button onclick="clearChatHistory()" title="លុបប្រវត្តិ" class="w-7 h-7 rounded-lg bg-white/5 hover:bg-rose-500/20 text-gray-400 hover:text-rose-400 flex items-center justify-center transition">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+          </button>
+          <button onclick="toggleAISection(false)" title="លាក់ AI" class="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/15 text-gray-300 flex items-center justify-center transition">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <div id="aiMessages" class="max-h-[320px] overflow-y-auto p-3.5 space-y-3 text-xs sm:text-[13px] leading-relaxed"></div>
+
+      <div class="relative border-t border-white/10 bg-slate-950/75">
+        <div id="questionDropdown" class="hidden absolute bottom-full left-2.5 right-2.5 mb-2 bg-[#0d1424] border border-yellow-500/30 rounded-2xl shadow-2xl overflow-hidden z-20">
+          <div class="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-yellow-500/10">
+            <span class="text-[11px] font-bold text-yellow-400 flex items-center gap-1.5">
+              <i data-lucide="list-checks" class="w-3.5 h-3.5"></i>
+              <span>ជ្រើសរើសសំណួរដែលមានក្នុងប្រព័ន្ធ (១០ មុខ)</span>
+            </span>
+            <button type="button" onclick="hideQuestionDropdown()" class="text-gray-400 hover:text-white p-0.5">
+              <i data-lucide="chevron-down" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+          <div id="questionList" class="max-h-56 overflow-y-auto divide-y divide-white/5"></div>
+        </div>
+
+        <div id="politeNotice" class="hidden mx-2.5 mt-2 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-400/35 text-amber-200 text-[11px] leading-relaxed flex items-start gap-2">
+          <i data-lucide="info" class="w-4 h-4 text-amber-400 shrink-0 mt-0.5"></i>
+          <span>សូមអភ័យទោស! សំណួរនេះមិនទាន់មានក្នុងប្រព័ន្ធនៅឡើយទេ។ សូមមេត្តាជ្រើសរើសសំណួរដែលមានស្រាប់ក្នុងបញ្ជីខាងលើ ដើម្បីទទួលបានការវិភាគជាក់ស្តែង និងសុក្រឹតបំផុត។</span>
+        </div>
+
+        <form onsubmit="handleChatSubmit(event)" class="p-2.5 flex items-center gap-2">
+          <div class="relative flex-1">
+            <input id="aiInput" type="text" placeholder="ចុចទីនេះ ដើម្បីជ្រើសរើសសំណួរវិភាគ..." autocomplete="off"
+              onfocus="openQuestionDropdown()" oninput="filterQuestions(this.value)"
+              class="w-full bg-white/5 border border-white/10 rounded-xl pl-3 pr-8 py-2.5 text-xs text-white placeholder-gray-400 focus:outline-none focus:border-yellow-400/60 transition" />
+            <button type="button" onclick="toggleQuestionDropdown()" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-yellow-400 transition">
+              <i data-lucide="chevron-up" class="w-4 h-4"></i>
+            </button>
+          </div>
+          <button id="aiSendBtn" type="submit" class="w-10 h-10 rounded-xl bg-yellow-400 hover:bg-yellow-300 disabled:opacity-40 text-[#080c14] flex items-center justify-center active:scale-95 transition shrink-0">
+            <i data-lucide="send" class="w-4 h-4 stroke-[2.2]"></i>
+          </button>
+        </form>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    window.addEventListener('error', e => e.preventDefault());
+    window.addEventListener('unhandledrejection', e => e.preventDefault());
+
+    function escHtml(str) {
+      return String(str ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    }
+
+    const Store = {
+      KEYS: {
+        TF: 'gp_tf_v9', CHAT: 'gp_chat_v9', CALC: 'gp_calc_v9',
+        ALERTS: 'gp_alerts_v9', JOURNAL: 'gp_journal_v9',
+        PREFS: 'gp_prefs_v9', CACHE_PREFIX: 'gp_data_v9_'
+      },
+      get(key, fallback = null) {
+        try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : fallback; }
+        catch { return fallback; }
+      },
+      set(key, val) {
+        try { localStorage.setItem(key, JSON.stringify(val)); }
+        catch {
+          try {
+            Object.keys(localStorage).forEach(k => { if (k.startsWith(this.KEYS.CACHE_PREFIX)) localStorage.removeItem(k); });
+            localStorage.setItem(key, JSON.stringify(val));
+          } catch {}
+        }
+      }
+    };
+
+    const SYSTEM_QUESTIONS = [
+      { id: 'mtf_check', text: 'ផ្ទៀងផ្ទាត់ 4 Timeframes (15m, 1H, 4H, 1D)', tag: 'MTF' },
+      { id: 'news_check', text: 'ពិនិត្យព័ត៌មានសេដ្ឋកិច្ចអាមេរិក (USD News)', tag: 'News' },
+      { id: 'inst_levels', text: 'តំបន់ PDH, PDL និង Asian Session High/Low', tag: 'Institutional' },
+      { id: 'entry', text: 'វិភាគចំណុចចូល Buy ឬ Sell ឥឡូវនេះ', tag: 'ចំណុចចូល' },
+      { id: 'risk_plan', text: 'កំណត់ Stop Loss និង Take Profit ត្រង់ណា?', tag: 'SL / TP' },
+      { id: 'deep_scan', text: 'ស្កេនសូចនាករ 5-in-1 ជាក់ស្តែង', tag: 'សូចនាករ' },
+      { id: 'trend', text: 'វិភាគនិន្នាការទីផ្សារមាសឥឡូវនេះ', tag: 'និន្នាការ' },
+      { id: 'pattern', text: 'វិភាគទម្រង់ទៀន Price Action ចុងក្រោយ', tag: 'ទម្រង់ទៀន' },
+      { id: 'volatility', text: 'វាយតម្លៃហានិភ័យ ATR និងវគ្គទីផ្សារ', tag: 'ហានិភ័យ' },
+      { id: 'summary', text: 'សង្ខេបស្ថានភាពទីផ្សារមាសពេញលេញ', tag: 'សង្ខេបរួម' }
+    ];
+
+    let currentInterval = Store.get(Store.KEYS.TF, '5m');
+    let chatHistory = Store.get(Store.KEYS.CHAT, []);
+    let calcPrefs = Store.get(Store.KEYS.CALC, { balance: 1000, risk: 1 });
+    let uiPrefs = Store.get(Store.KEYS.PREFS, { showAI: false, showSignals: true, showZones: true, showSlTp: true, showInst: false });
+    let priceAlerts = Store.get(Store.KEYS.ALERTS, []);
+    let journalEntries = Store.get(Store.KEYS.JOURNAL, []);
+    let currentSlDist = 4.0;
+    let ws = null, directWs = null, lastPrice = null, lastCandle = null, prevCandleClose = null;
+    let candleCount = 0, isFirstLoad = true, isFullscreen = false, useDirectStream = false;
+    let reconnectTimer = null, reconnectDelay = 2500, wsFailCount = 0, httpPollTimer = null;
+    let isAiBusy = false, noticeTimer = null, overlayRaf = null;
+    let priceLines = { pdh: null, pdl: null, ah: null, al: null, entry: null, sl: null, tp1: null };
+    let lastInstData = null, lastSetupData = null, lastChartSignals = [], lastZones = null;
+
+    lucide.createIcons();
+    document.getElementById('calcBalance').value = calcPrefs.balance;
+    document.getElementById('calcRisk').value = calcPrefs.risk;
+
+    // ==================== CRISP HIGH-CONTRAST CHART ====================
+    const chartContainer = document.getElementById('chart');
+    const signalCanvas = document.getElementById('signalCanvas');
+    const sCtx = signalCanvas.getContext('2d');
+
+    const chart = LightweightCharts.createChart(chartContainer, {
+      layout: { background: { color: 'transparent' }, textColor: '#cbd5e1', fontSize: 11 },
+      grid: { vertLines: { color: 'rgba(255,255,255,0.035)' }, horzLines: { color: 'rgba(255,255,255,0.035)' } },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)', autoScale: true, scaleMargins: { top: 0.14, bottom: 0.16 } },
+      timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true, secondsVisible: false, rightOffset: 6, barSpacing: 9, minBarSpacing: 3, fixLeftEdge: true },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+      handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
+    });
+
+    const candleSeries = chart.addCandlestickSeries({
+      upColor: '#00c896', downColor: '#ff4d6d',
+      borderUpColor: '#00e5a8', borderDownColor: '#ff6b86',
+      wickUpColor: '#00e5a8', wickDownColor: '#ff6b86',
+      lastValueVisible: false, priceLineVisible: true,
+      priceLineColor: '#38bdf8', priceLineWidth: 1, priceLineStyle: LightweightCharts.LineStyle.Dotted,
+    });
+    const ema20Series = chart.addLineSeries({ color: '#38bdf8', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true });
+    const ema50Series = chart.addLineSeries({ color: '#f59e0b', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true });
+
+    // ==================== TRADINGVIEW-STYLE BOXES & DEMAND ZONE CANVAS ====================
+    function drawRoundRect(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    function renderOverlayNow() {
+      overlayRaf = null;
+      const w = chartContainer.clientWidth;
+      const h = chartContainer.clientHeight;
+      if (!w || !h) return;
+
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      if (signalCanvas.width !== Math.round(w * dpr) || signalCanvas.height !== Math.round(h * dpr)) {
+        signalCanvas.width = Math.round(w * dpr);
+        signalCanvas.height = Math.round(h * dpr);
+        signalCanvas.style.width = `${w}px`;
+        signalCanvas.style.height = `${h}px`;
+      }
+
+      sCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      sCtx.clearRect(0, 0, w, h);
+
+      // កាត់គែមមិនឲ្យបាំងជួរតម្លៃខាងស្តាំ និងជួរម៉ោងខាងក្រោម
+      const plotW = Math.max(0, w - 68);
+      const plotH = Math.max(0, h - 26);
+
+      sCtx.save();
+      sCtx.beginPath();
+      sCtx.rect(0, 0, plotW, plotH);
+      sCtx.clip();
+
+      // ១. គូរតំបន់ Demand Zone ពណ៌ខៀវ (និង Supply Zone ក្រហមស្រាល)
+      if (uiPrefs.showZones && lastZones) {
+        if (lastZones.demand) {
+          const yTop = candleSeries.priceToCoordinate(lastZones.demand.top);
+          const yBot = candleSeries.priceToCoordinate(lastZones.demand.bottom);
+          if (yTop !== null && yBot !== null) {
+            const topY = Math.min(yTop, yBot);
+            const boxH = Math.max(Math.abs(yBot - yTop), 14);
+            sCtx.fillStyle = 'rgba(59, 130, 246, 0.22)';
+            sCtx.fillRect(0, topY, plotW, boxH);
+            sCtx.strokeStyle = 'rgba(96, 165, 250, 0.55)';
+            sCtx.lineWidth = 1;
+            sCtx.beginPath();
+            sCtx.moveTo(0, topY); sCtx.lineTo(plotW, topY);
+            sCtx.moveTo(0, topY + boxH); sCtx.lineTo(plotW, topY + boxH);
+            sCtx.stroke();
+
+            sCtx.font = '700 9px system-ui, sans-serif';
+            sCtx.fillStyle = 'rgba(147, 197, 253, 0.9)';
+            sCtx.textAlign = 'left';
+            sCtx.textBaseline = 'top';
+            sCtx.fillText('DEMAND ZONE', 8, topY + 4);
+          }
+        }
+        if (lastZones.supply) {
+          const yTop = candleSeries.priceToCoordinate(lastZones.supply.top);
+          const yBot = candleSeries.priceToCoordinate(lastZones.supply.bottom);
+          if (yTop !== null && yBot !== null) {
+            const topY = Math.min(yTop, yBot);
+            const boxH = Math.max(Math.abs(yBot - yTop), 12);
+            sCtx.fillStyle = 'rgba(244, 63, 94, 0.11)';
+            sCtx.fillRect(0, topY, plotW, boxH);
+            sCtx.strokeStyle = 'rgba(244, 63, 94, 0.35)';
+            sCtx.lineWidth = 1;
+            sCtx.beginPath();
+            sCtx.moveTo(0, topY); sCtx.lineTo(plotW, topY);
+            sCtx.moveTo(0, topY + boxH); sCtx.lineTo(plotW, topY + boxH);
+            sCtx.stroke();
+          }
+        }
+      }
+
+      // ២. គូរប្រអប់ BUY / SELL ធំៗចំបង្គោលទៀន + CHoCH + TP1 + SL
+      if (uiPrefs.showSignals && Array.isArray(lastChartSignals)) {
+        const tsScale = chart.timeScale();
+        for (const sig of lastChartSignals) {
+          const x = tsScale.timeToCoordinate(sig.time);
+          const y = candleSeries.priceToCoordinate(sig.price);
+          if (x === null || y === null || x < -30 || x > plotW + 30) continue;
+
+          if (sig.type === 'BUY') {
+            const bw = 42, bh = 21;
+            const bx = x - bw / 2;
+            const by = Math.min(plotH - bh - 4, y + 10);
+
+            // សញ្ញាព្រួញតូចចង្អុលទៅបាតទៀន
+            sCtx.fillStyle = '#16c784';
+            sCtx.beginPath();
+            sCtx.moveTo(x, by - 5);
+            sCtx.lineTo(x - 5, by + 1);
+            sCtx.lineTo(x + 5, by + 1);
+            sCtx.closePath();
+            sCtx.fill();
+
+            // ប្រអប់ពណ៌បៃតងធំ
+            drawRoundRect(sCtx, bx, by, bw, bh, 5);
+            sCtx.fillStyle = '#16c784';
+            sCtx.fill();
+            sCtx.strokeStyle = 'rgba(255,255,255,0.28)';
+            sCtx.lineWidth = 1;
+            sCtx.stroke();
+
+            sCtx.font = '800 10.5px system-ui, sans-serif';
+            sCtx.fillStyle = '#ffffff';
+            sCtx.textAlign = 'center';
+            sCtx.textBaseline = 'middle';
+            sCtx.fillText('BUY', x, by + bh / 2 + 0.5);
+
+            if (sig.sublabel) {
+              sCtx.font = '700 8.5px system-ui, sans-serif';
+              sCtx.fillStyle = '#6ee7b7';
+              sCtx.fillText(sig.sublabel, x, by + bh + 8);
+            }
+          } else if (sig.type === 'SELL') {
+            const bw = 44, bh = 21;
+            const bx = x - bw / 2;
+            const by = Math.max(4, y - bh - 10);
+
+            // សញ្ញាព្រួញតូចចង្អុលទៅកំពូលទៀន
+            sCtx.fillStyle = '#ef4444';
+            sCtx.beginPath();
+            sCtx.moveTo(x, by + bh + 5);
+            sCtx.lineTo(x - 5, by + bh - 1);
+            sCtx.lineTo(x + 5, by + bh - 1);
+            sCtx.closePath();
+            sCtx.fill();
+
+            // ប្រអប់ពណ៌ក្រហមធំ
+            drawRoundRect(sCtx, bx, by, bw, bh, 5);
+            sCtx.fillStyle = '#ef4444';
+            sCtx.fill();
+            sCtx.strokeStyle = 'rgba(255,255,255,0.28)';
+            sCtx.lineWidth = 1;
+            sCtx.stroke();
+
+            sCtx.font = '800 10.5px system-ui, sans-serif';
+            sCtx.fillStyle = '#ffffff';
+            sCtx.textAlign = 'center';
+            sCtx.textBaseline = 'middle';
+            sCtx.fillText('SELL', x, by + bh / 2 + 0.5);
+
+            if (sig.sublabel) {
+              sCtx.font = '700 8.5px system-ui, sans-serif';
+              sCtx.fillStyle = '#fda4af';
+              sCtx.fillText(sig.sublabel, x, by - 7);
+            }
+          } else if (sig.type === 'TP1') {
+            const bw = 30, bh = 16;
+            const bx = x - bw / 2;
+            const by = Math.max(4, y - bh - 8);
+            drawRoundRect(sCtx, bx, by, bw, bh, 4);
+            sCtx.fillStyle = 'rgba(34, 197, 94, 0.9)';
+            sCtx.fill();
+            sCtx.font = '800 9px system-ui, sans-serif';
+            sCtx.fillStyle = '#ffffff';
+            sCtx.textAlign = 'center';
+            sCtx.textBaseline = 'middle';
+            sCtx.fillText('TP1', x, by + bh / 2 + 0.5);
+          } else if (sig.type === 'SL') {
+            sCtx.strokeStyle = '#ff4d6d';
+            sCtx.lineWidth = 2;
+            const cy = y - 10;
+            sCtx.beginPath();
+            sCtx.moveTo(x - 4, cy - 4); sCtx.lineTo(x + 4, cy + 4);
+            sCtx.moveTo(x + 4, cy - 4); sCtx.lineTo(x - 4, cy + 4);
+            sCtx.stroke();
+            sCtx.font = '800 8.5px system-ui, sans-serif';
+            sCtx.fillStyle = '#fda4af';
+            sCtx.textAlign = 'center';
+            sCtx.fillText('SL', x, cy - 9);
+          } else if (sig.type === 'CHoCH_UP' || sig.type === 'CHoCH_DN') {
+            const isUp = sig.type === 'CHoCH_UP';
+            const ly = isUp ? Math.max(12, y - 14) : Math.min(plotH - 12, y + 14);
+            sCtx.strokeStyle = isUp ? 'rgba(56, 189, 248, 0.6)' : 'rgba(251, 191, 36, 0.6)';
+            sCtx.lineWidth = 1;
+            sCtx.setLineDash([3, 2]);
+            sCtx.beginPath();
+            sCtx.moveTo(x - 16, ly); sCtx.lineTo(x + 16, ly);
+            sCtx.stroke();
+            sCtx.setLineDash([]);
+            sCtx.font = '700 8.5px system-ui, sans-serif';
+            sCtx.fillStyle = isUp ? '#7dd3fc' : '#fcd34d';
+            sCtx.textAlign = 'center';
+            sCtx.textBaseline = 'middle';
+            sCtx.fillText('CHoCH', x, ly - 7);
+          }
+        }
+      }
+
+      sCtx.restore();
+    }
+
+    function scheduleOverlay() {
+      if (!overlayRaf) overlayRaf = requestAnimationFrame(renderOverlayNow);
+    }
+
+    function updateAxisLivePill(price, direction = 0) {
+      const pill = document.getElementById('axisLivePill');
+      if (!price || isNaN(price)) return;
+      document.getElementById('pillPrice').textContent = price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      if (direction > 0) pill.style.backgroundColor = '#00a87e';
+      else if (direction < 0) pill.style.backgroundColor = '#e11d48';
+
+      const y = candleSeries.priceToCoordinate(price);
+      const stageH = chartContainer.clientHeight;
+      if (y === null || y < 14 || y > stageH - 28) pill.classList.add('hidden');
+      else { pill.classList.remove('hidden'); pill.style.top = `${y}px`; }
+    }
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+      if (lastPrice) updateAxisLivePill(lastPrice, 0);
+      scheduleOverlay();
+    });
+    chart.timeScale().subscribeVisibleTimeRangeChange(scheduleOverlay);
+
+    // ធានាថាប្រអប់ BUY/SELL និង Demand Zone តាមជាប់ទៀនជានិច្ចពេលអូស ឬ Zoom
+    ['pointermove', 'wheel', 'touchmove', 'touchend', 'mouseup'].forEach(ev => {
+      chartContainer.addEventListener(ev, () => {
+        scheduleOverlay();
+        if (lastPrice) updateAxisLivePill(lastPrice, 0);
+      }, { passive: true });
+    });
+
+    new ResizeObserver(entries => {
+      for (const e of entries) {
+        if (e.contentRect.width > 0 && e.contentRect.height > 0) {
+          chart.applyOptions({ width: e.contentRect.width, height: e.contentRect.height });
+          requestAnimationFrame(() => {
+            if (lastPrice) updateAxisLivePill(lastPrice, 0);
+            renderOverlayNow();
+          });
+        }
+      }
+    }).observe(chartContainer);
+
+    function resetChartView() {
+      try {
+        chart.priceScale('right').applyOptions({ autoScale: true });
+        if (candleCount > 10) {
+          const visibleBars = isFullscreen ? 65 : 44;
+          chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, candleCount - visibleBars), to: candleCount + 5 });
+        } else {
+          chart.timeScale().fitContent();
+        }
+        requestAnimationFrame(() => {
+          if (lastPrice) updateAxisLivePill(lastPrice, 0);
+          renderOverlayNow();
+        });
+      } catch {}
+    }
+
+    // ==================== FULLSCREEN (PORTRAIT & LANDSCAPE) ====================
+    function toggleFullscreen(forceState = null) {
+      const card = document.getElementById('chartCard');
+      isFullscreen = forceState !== null ? Boolean(forceState) : !isFullscreen;
+      card.classList.toggle('is-fullscreen', isFullscreen);
+      document.body.style.overflow = isFullscreen ? 'hidden' : '';
+
+      document.getElementById('fsIconEnter').classList.toggle('hidden', isFullscreen);
+      document.getElementById('fsIconEnter').classList.toggle('flex', !isFullscreen);
+      document.getElementById('fsIconExit').classList.toggle('hidden', !isFullscreen);
+      document.getElementById('fsIconExit').classList.toggle('flex', isFullscreen);
+      document.getElementById('fsLiveInfo').classList.toggle('hidden', !isFullscreen);
+      document.getElementById('fsLiveInfo').classList.toggle('flex', isFullscreen);
+      document.getElementById('fsTfBar').classList.toggle('hidden', !isFullscreen);
+      document.getElementById('fsTfBar').classList.toggle('flex', isFullscreen);
+
+      setTimeout(() => {
+        chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight });
+        resetChartView();
+      }, 60);
+    }
+
+    window.addEventListener('keydown', e => { if (e.key === 'Escape' && isFullscreen) toggleFullscreen(false); });
+    window.addEventListener('orientationchange', () => {
+      setTimeout(() => {
+        chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight });
+        if (lastPrice) updateAxisLivePill(lastPrice, 0);
+        scheduleOverlay();
+      }, 220);
+    });
+
+    // ==================== CHART LINES & CHECKBOXES ====================
+    function setLine(key, price, color, title, style = LightweightCharts.LineStyle.Dashed) {
+      try {
+        if (priceLines[key]) { candleSeries.removePriceLine(priceLines[key]); priceLines[key] = null; }
+        if (price && !isNaN(price)) {
+          priceLines[key] = candleSeries.createPriceLine({ price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title });
+        }
+      } catch {}
+    }
+
+    function drawInstLines() {
+      if (!uiPrefs.showInst || !lastInstData) { ['pdh', 'pdl', 'ah', 'al'].forEach(k => setLine(k, null)); return; }
+      setLine('pdh', lastInstData.pdh, 'rgba(192,132,252,0.55)', 'PDH');
+      setLine('pdl', lastInstData.pdl, 'rgba(192,132,252,0.55)', 'PDL');
+      setLine('ah', lastInstData.asian_high, 'rgba(34,211,238,0.5)', 'ASIAN H');
+      setLine('al', lastInstData.asian_low, 'rgba(34,211,238,0.5)', 'ASIAN L');
+    }
+
+    function drawSlTpLines() {
+      const hud = document.getElementById('chartHud');
+      if (!uiPrefs.showSlTp || !lastSetupData) { ['entry', 'sl', 'tp1'].forEach(k => setLine(k, null)); hud.classList.add('hidden'); return; }
+      hud.classList.remove('hidden');
+      setLine('entry', lastSetupData.entry, 'rgba(250,204,21,0.75)', 'ENTRY', LightweightCharts.LineStyle.Solid);
+      setLine('sl', lastSetupData.sl, 'rgba(244,63,94,0.85)', 'SL', LightweightCharts.LineStyle.Solid);
+      setLine('tp1', lastSetupData.tp1, 'rgba(16,185,129,0.85)', 'TP1', LightweightCharts.LineStyle.Solid);
+    }
+
+    function toggleSignals(checked) { uiPrefs.showSignals = checked; Store.set(Store.KEYS.PREFS, uiPrefs); scheduleOverlay(); }
+    function toggleZones(checked) { uiPrefs.showZones = checked; Store.set(Store.KEYS.PREFS, uiPrefs); scheduleOverlay(); }
+    function toggleSlTpLines(checked) { uiPrefs.showSlTp = checked; Store.set(Store.KEYS.PREFS, uiPrefs); drawSlTpLines(); }
+    function toggleInstLines() {
+      uiPrefs.showInst = !uiPrefs.showInst;
+      Store.set(Store.KEYS.PREFS, uiPrefs);
+      document.getElementById('toggleInstBtn').textContent = `PDH/Asian: ${uiPrefs.showInst ? 'ON' : 'OFF'}`;
+      drawInstLines();
+    }
+    function toggleAISection(checked, scroll = true) {
+      uiPrefs.showAI = Boolean(checked);
+      Store.set(Store.KEYS.PREFS, uiPrefs);
+      document.getElementById('chkAI').checked = uiPrefs.showAI;
+      const sec = document.getElementById('aiSection');
+      sec.classList.toggle('hidden', !uiPrefs.showAI);
+      if (uiPrefs.showAI && scroll) setTimeout(() => sec.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+      else hideQuestionDropdown();
+    }
+
+    // ==================== SOUND ALERTS & JOURNAL ====================
+    function playAlertChime() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        [880, 1174.66].forEach((freq, i) => {
+          const osc = ctx.createOscillator(), gain = ctx.createGain();
+          osc.type = 'sine'; osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.18, ctx.currentTime + i * 0.18);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.18 + 0.4);
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(ctx.currentTime + i * 0.18); osc.stop(ctx.currentTime + i * 0.18 + 0.4);
+        });
+      } catch {}
+    }
+
+    function checkPriceAlerts(price) {
+      if (!price || !priceAlerts.length) return;
+      let changed = false;
+      priceAlerts.forEach(a => {
+        if (a.triggered) return;
+        if ((a.dir === 'above' && price >= a.target) || (a.dir === 'below' && price <= a.target)) {
+          a.triggered = true; changed = true; playAlertChime();
+          document.getElementById('alertToastMsg').textContent = `មាសបានឈានដល់តម្លៃ $${a.target.toFixed(2)} (បច្ចុប្បន្ន $${price.toFixed(2)})`;
+          document.getElementById('alertToast').classList.remove('hidden');
+        }
+      });
+      if (changed) { Store.set(Store.KEYS.ALERTS, priceAlerts); renderAlerts(); }
+    }
+
+    function addPriceAlert(e) {
+      e.preventDefault();
+      const inp = document.getElementById('alertPriceInput'), val = parseFloat(inp.value);
+      if (!val || val <= 0) return;
+      priceAlerts.unshift({ id: Date.now(), target: val, dir: (lastPrice && val < lastPrice) ? 'below' : 'above', triggered: false });
+      priceAlerts = priceAlerts.slice(0, 8);
+      Store.set(Store.KEYS.ALERTS, priceAlerts);
+      inp.value = ''; renderAlerts();
+    }
+    function removePriceAlert(id) { priceAlerts = priceAlerts.filter(a => a.id !== id); Store.set(Store.KEYS.ALERTS, priceAlerts); renderAlerts(); }
+    function renderAlerts() {
+      const box = document.getElementById('alertList');
+      if (!priceAlerts.length) { box.innerHTML = '<div class="text-[11px] text-gray-500">មិនទាន់មានការដាស់តឿនតម្លៃទេ។</div>'; return; }
+      box.innerHTML = priceAlerts.map(a => `
+        <div class="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full ${a.triggered ? 'bg-emerald-400' : 'bg-amber-400'}"></span>
+            <span class="font-bold tabular-nums ${a.triggered ? 'line-through text-gray-500' : 'text-white'}">$${a.target.toFixed(2)}</span>
+            <span class="text-[10px] text-gray-400">${a.dir === 'above' ? 'ឡើងដល់' : 'ចុះដល់'}</span>
+          </div>
+          <button onclick="removePriceAlert(${a.id})" class="text-gray-400 hover:text-rose-400 text-[11px] font-semibold">លុប</button>
+        </div>`).join('');
+    }
+
+    function addJournalEntry(e) {
+      e.preventDefault();
+      const side = document.getElementById('jSide').value, pnl = parseFloat(document.getElementById('jPnl').value);
+      if (isNaN(pnl)) return;
+      const now = new Date();
+      const timeStr = `${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+      journalEntries.unshift({ id: Date.now(), side, pnl, time: timeStr });
+      journalEntries = journalEntries.slice(0, 50);
+      Store.set(Store.KEYS.JOURNAL, journalEntries);
+      document.getElementById('jPnl').value = ''; renderJournal();
+    }
+    function removeJournal(id) { journalEntries = journalEntries.filter(j => j.id !== id); Store.set(Store.KEYS.JOURNAL, journalEntries); renderJournal(); }
+    function renderJournal() {
+      const box = document.getElementById('journalList');
+      const total = journalEntries.length, wins = journalEntries.filter(j => j.pnl > 0).length;
+      const net = journalEntries.reduce((s, j) => s + j.pnl, 0);
+      document.getElementById('jWinRate').textContent = `Win: ${total ? Math.round((wins / total) * 100) : 0}% (${total})`;
+      const pnlEl = document.getElementById('jNetPnl');
+      pnlEl.textContent = `${net >= 0 ? '+' : ''}$${net.toFixed(2)}`;
+      pnlEl.className = net >= 0 ? 'text-emerald-400' : 'text-rose-400';
+      if (!total) { box.innerHTML = '<div class="text-[11px] text-gray-500">មិនទាន់មានកំណត់ត្រាជួញដូរទេ។</div>'; return; }
+      box.innerHTML = journalEntries.map(j => `
+        <div class="flex items-center justify-between bg-black/30 border border-white/5 rounded-xl px-3 py-2">
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] px-1.5 py-0.5 rounded font-bold ${j.side === 'BUY' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'}">${escHtml(j.side)}</span>
+            <span class="text-[10px] text-gray-400">${escHtml(j.time)}</span>
+          </div>
+          <div class="flex items-center gap-2.5">
+            <span class="font-bold tabular-nums ${j.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${j.pnl >= 0 ? '+' : ''}$${j.pnl.toFixed(2)}</span>
+            <button onclick="removeJournal(${j.id})" class="text-gray-500 hover:text-rose-400 text-[10px]">លុប</button>
+          </div>
+        </div>`).join('');
+    }
+
+    // ==================== DATA RENDERERS ====================
+    function renderNews(news) {
+      if (!news) return;
+      const bar = document.getElementById('newsBanner'), txt = document.getElementById('newsText'), badge = document.getElementById('newsBadge');
+      if (news.danger && news.danger_event) {
+        const ev = news.danger_event;
+        bar.className = 'rounded-2xl px-3.5 py-2.5 flex items-center justify-between gap-2 text-xs bg-rose-500/20 border border-rose-500/50 animate-pulse';
+        txt.innerHTML = `<b class="text-rose-300">ព្រមានព័ត៌មានក្រហម USD៖</b> ${escHtml(ev.title)} (នៅសល់ ${ev.mins_until} នាទី) — គួរផ្អាកចូល Order`;
+        badge.textContent = 'DANGER'; badge.className = 'shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-rose-500 text-white font-black';
+      } else if (news.upcoming && news.upcoming.length) {
+        const ev = news.upcoming[0];
+        bar.className = 'glass rounded-2xl px-3.5 py-2.5 flex items-center justify-between gap-2 text-xs';
+        txt.innerHTML = `<span class="text-gray-400">ព័ត៌មានក្រហម USD បន្ទាប់៖</span> <b class="text-white">${escHtml(ev.title)}</b> <span class="text-sky-300">(ក្នុង ${(ev.mins_until/60).toFixed(1)} ម៉ោង)</span>`;
+        badge.textContent = 'SAFE NOW'; badge.className = 'shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-bold border border-emerald-500/25';
+      } else {
+        bar.className = 'glass rounded-2xl px-3.5 py-2.5 flex items-center justify-between gap-2 text-xs';
+        txt.textContent = 'គ្មានព័ត៌មានសេដ្ឋកិច្ច USD កម្រិតក្រហមបន្ទាន់ក្នុងពេលនេះទេ';
+        badge.textContent = 'CLEAR'; badge.className = 'shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-bold border border-emerald-500/25';
+      }
+    }
+
+    function renderMTF(mtf) {
+      if (!mtf || !mtf.timeframes || !mtf.timeframes.length) return;
+      const vEl = document.getElementById('mtfVerdict');
+      vEl.textContent = mtf.verdict;
+      vEl.className = mtf.aligned === 'BUY' ? 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30'
+        : mtf.aligned === 'SELL' ? 'text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30'
+        : 'text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30';
+      document.getElementById('mtfGrid').innerHTML = mtf.timeframes.map(t => {
+        const cls = t.bias === 'BUY' ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-400'
+          : t.bias === 'SELL' ? 'border-rose-500/35 bg-rose-500/10 text-rose-400'
+          : 'border-white/10 bg-black/30 text-yellow-300';
+        return `<div class="rounded-xl p-2 text-center border ${cls}"><div class="text-[10px] text-gray-300 font-semibold">${escHtml(t.label)}</div><div class="text-xs font-black mt-0.5">${escHtml(t.bias)}</div><div class="text-[9px] text-gray-400 mt-0.5">RSI ${t.rsi}</div></div>`;
+      }).join('');
+      const warnBox = document.getElementById('mtfWarning');
+      if (mtf.warning) { document.getElementById('mtfWarningText').textContent = mtf.warning; warnBox.classList.remove('hidden'); }
+      else warnBox.classList.add('hidden');
+    }
+
+    function updateLotCalc() {
+      const bal = Math.max(0, parseFloat(document.getElementById('calcBalance').value) || 0);
+      const riskPct = Math.max(0, Math.min(20, parseFloat(document.getElementById('calcRisk').value) || 0));
+      Store.set(Store.KEYS.CALC, { balance: bal, risk: riskPct });
+      const riskUsd = bal * (riskPct / 100), slDist = Math.max(0.5, currentSlDist);
+      const safeLot = Math.max(0.01, Math.floor((riskUsd / (slDist * 100)) * 100) / 100);
+      document.getElementById('resLot').textContent = `${safeLot.toFixed(2)} Lot`;
+      document.getElementById('resRiskUsd').textContent = `$${riskUsd.toFixed(2)}`;
+      document.getElementById('resSlDist').textContent = `$${slDist.toFixed(2)}`;
+    }
+
+    function updatePriceUI(price, change, changePct) {
+      if (!price || isNaN(price)) return;
+      const priceEl = document.getElementById('livePrice');
+      const dir = lastPrice !== null ? (price > lastPrice ? 1 : price < lastPrice ? -1 : 0) : 0;
+
+      priceEl.textContent = `$${price.toFixed(2)}`;
+      document.getElementById('fsPrice').textContent = `$${price.toFixed(2)}`;
+      if (dir !== 0) {
+        priceEl.classList.remove('tick-up', 'tick-down');
+        void priceEl.offsetWidth;
+        priceEl.classList.add(dir > 0 ? 'tick-up' : 'tick-down');
+      }
+      lastPrice = price;
+      updateAxisLivePill(price, dir);
+      checkPriceAlerts(price);
+
+      if (typeof change === 'number' && !isNaN(change)) {
+        const changeEl = document.getElementById('priceChange'), sign = change >= 0 ? '+' : '';
+        changeEl.textContent = `${sign}${change.toFixed(2)} (${sign}${(changePct || 0).toFixed(2)}%)`;
+        changeEl.className = `text-xs font-semibold tabular-nums ${change >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+      }
+    }
+
+    function applyTick(msg) {
+      const livePrice = typeof msg === 'number' ? msg : msg.price;
+      if (!livePrice || isNaN(livePrice)) return;
+      let ch = 0, chPct = 0;
+      if (prevCandleClose) { ch = livePrice - prevCandleClose; chPct = (ch / prevCandleClose) * 100; }
+      updatePriceUI(livePrice, ch, chPct);
+
+      if (msg.bid && msg.ask) {
+        document.getElementById('bidAskText').textContent =
+          `Bid $${msg.bid.toFixed(2)} • Ask $${msg.ask.toFixed(2)} (Spd $${(msg.spread || 0).toFixed(2)})`;
+      }
+      if (lastCandle && lastCandle.time) {
+        lastCandle = { ...lastCandle, close: livePrice, high: Math.max(lastCandle.high, livePrice), low: Math.min(lastCandle.low, livePrice) };
+        try { candleSeries.update(lastCandle); } catch {}
+        scheduleOverlay();
+      }
+    }
+
+    setInterval(() => {
+      const secMap = { '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 };
+      const tfSec = secMap[currentInterval] || 900;
+      const rem = tfSec - (Math.floor(Date.now() / 1000) % tfSec);
+      const h = Math.floor(rem / 3600), m = Math.floor((rem % 3600) / 60), s = rem % 60;
+      const txt = h > 0 ? `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+      document.getElementById('pillTimer').textContent = txt;
+    }, 1000);
+
+    function stopDirectStream() {
+      if (directWs) { directWs.onclose = null; directWs.onerror = null; directWs.close(); directWs = null; }
+    }
+    function startDirectStream() {
+      if (directWs || document.hidden || !navigator.onLine) return;
+      try {
+        directWs = new WebSocket('wss://data-stream.binance.vision/ws/paxgusdt@bookTicker');
+        directWs.onmessage = (e) => {
+          try {
+            const d = JSON.parse(e.data);
+            const bid = parseFloat(d.b), ask = parseFloat(d.a);
+            if (bid > 0 && ask > 0) applyTick({ price: (bid + ask) / 2, bid, ask, spread: Math.max(0, ask - bid) });
+          } catch {}
+        };
+        directWs.onclose = () => { directWs = null; };
+        directWs.onerror = () => { stopDirectStream(); };
+      } catch {}
+    }
+
+    function applyFullData(data, fromCache = false) {
+      if (!data || !Array.isArray(data.candles) || !data.candles.length) return;
+      if (data.interval && data.interval !== currentInterval) return;
+
+      document.getElementById('loader').style.display = 'none';
+      document.getElementById('dataSource').textContent = fromCache ? `${data.source} • ក្នុងទូរស័ព្ទ` : `${data.source} • Real-time`;
+
+      useDirectStream = Boolean(data.source && data.source.includes('PAXG'));
+      if (useDirectStream && !fromCache) startDirectStream();
+      else if (!useDirectStream) stopDirectStream();
+
+      const fb = document.getElementById('feedBadge');
+      fb.textContent = data.is_spot ? 'SPOT' : 'FUTURES';
+      fb.className = data.is_spot
+        ? 'hidden sm:inline-block text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/25'
+        : 'hidden sm:inline-block text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 font-bold border border-amber-500/25';
+
+      if (data.session?.name) document.getElementById('sessionText').textContent = data.session.name;
+      candleCount = data.candles.length;
+      lastCandle = { ...data.candles[candleCount - 1] };
+      prevCandleClose = candleCount > 1 ? data.candles[candleCount - 2].close : lastCandle.open;
+
+      if (data.bid && data.ask) {
+        document.getElementById('bidAskText').textContent =
+          `Bid $${data.bid.toFixed(2)} • Ask $${data.ask.toFixed(2)} (Spd $${(data.spread || 0).toFixed(2)})`;
+      }
+
+      const sigEl = document.getElementById('signalBadge');
+      sigEl.textContent = data.signal;
+      const bar = document.getElementById('confBar');
+      document.getElementById('confBadge').textContent = `${data.confidence}%`;
+      bar.style.width = `${data.confidence}%`;
+      if (data.signal.includes('BUY')) { sigEl.className = 'mt-1 text-base sm:text-lg font-black text-emerald-400'; bar.className = 'h-full bg-emerald-400 transition-all duration-500'; }
+      else if (data.signal.includes('SELL')) { sigEl.className = 'mt-1 text-base sm:text-lg font-black text-rose-400'; bar.className = 'h-full bg-rose-400 transition-all duration-500'; }
+      else { sigEl.className = 'mt-1 text-base sm:text-lg font-black text-yellow-400'; bar.className = 'h-full bg-yellow-400 transition-all duration-500'; }
+
+      const activeSide = data.active_signal?.side || (data.signal.includes('BUY') ? 'BUY' : data.signal.includes('SELL') ? 'SELL' : 'WAIT');
+      const hudSide = document.getElementById('hudSide');
+      hudSide.textContent = activeSide;
+      hudSide.className = activeSide === 'BUY' ? 'font-black text-emerald-400' : activeSide === 'SELL' ? 'font-black text-rose-400' : 'font-black text-yellow-400';
+      document.getElementById('hudEntry').textContent = `$${data.setup.entry.toFixed(2)}`;
+      document.getElementById('hudSl').textContent = `$${data.setup.sl.toFixed(2)}`;
+      document.getElementById('hudTp').textContent = `$${data.setup.tp1.toFixed(2)}`;
+      document.getElementById('hudRr').textContent = data.setup.rr;
+
+      document.getElementById('rsiVal').textContent = data.rsi;
+      document.getElementById('atrVal').textContent = `ATR: $${data.atr}`;
+      document.getElementById('supportVal').textContent = `$${data.support}`;
+      document.getElementById('resistanceVal').textContent = `$${data.resistance}`;
+      document.getElementById('slVal').textContent = `$${data.setup.sl}`;
+      document.getElementById('tp1Val').textContent = `$${data.setup.tp1}`;
+      document.getElementById('tp2Val').textContent = `$${data.setup.tp2}`;
+      document.getElementById('rrVal').textContent = `R:R ${data.setup.rr}`;
+
+      currentSlDist = data.setup.sl_dist || Math.abs(data.price - data.setup.sl) || 4.0;
+      updateLotCalc();
+
+      document.getElementById('reasonsList').innerHTML = (data.reasons || []).map(r => `<li>${escHtml(r)}</li>`).join('');
+      if (Array.isArray(data.matrix)) {
+        document.getElementById('techMatrix').innerHTML = data.matrix.map(item => {
+          const cls = item.status === 'BUY' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/25'
+            : item.status === 'SELL' ? 'bg-rose-500/15 text-rose-400 border-rose-500/25'
+            : 'bg-yellow-500/15 text-yellow-300 border-yellow-500/25';
+          return `<div class="bg-black/30 border border-white/5 rounded-xl p-2.5"><div class="flex items-center justify-between gap-1"><span class="text-[10px] text-gray-400">${escHtml(item.name)}</span><span class="text-[9px] px-1.5 py-0.5 rounded font-bold border ${cls}">${escHtml(item.status)}</span></div><div class="text-xs font-bold text-gray-100 mt-1 truncate tabular-nums">${escHtml(item.value)}</div></div>`;
+        }).join('');
+      }
+
+      if (data.mtf) renderMTF(data.mtf);
+      if (data.news) renderNews(data.news);
+      if (data.inst_levels) {
+        lastInstData = data.inst_levels;
+        document.getElementById('pdhVal').textContent = lastInstData.pdh ? `$${lastInstData.pdh}` : '--';
+        document.getElementById('pdlVal').textContent = lastInstData.pdl ? `$${lastInstData.pdl}` : '--';
+        document.getElementById('asianHighVal').textContent = lastInstData.asian_high ? `$${lastInstData.asian_high}` : '--';
+        document.getElementById('asianLowVal').textContent = lastInstData.asian_low ? `$${lastInstData.asian_low}` : '--';
+      }
+
+      lastSetupData = data.setup;
+      lastChartSignals = data.chart_signals || [];
+      lastZones = data.zones || null;
+
+      try {
+        candleSeries.setData(data.candles);
+        ema20Series.setData(data.ema20_line);
+        ema50Series.setData(data.ema50_line);
+        drawInstLines();
+        drawSlTpLines();
+      } catch {}
+
+      updatePriceUI(data.price, data.change, data.change_pct);
+      if (isFirstLoad) { resetChartView(); isFirstLoad = false; }
+      else scheduleOverlay();
+
+      if (!fromCache) Store.set(Store.KEYS.CACHE_PREFIX + currentInterval, data);
+    }
+
+    // ==================== CONNECTION ENGINE ====================
+    function stopHttpFallback() { if (httpPollTimer) { clearInterval(httpPollTimer); httpPollTimer = null; } }
+    async function fetchRestOnce() {
+      if (document.hidden || !navigator.onLine) return;
+      try {
+        const res = await fetch(`/api/gold?interval=${currentInterval}`);
+        const data = await res.json();
+        if (data && !data.error) {
+          applyFullData(data, false);
+          document.getElementById('wsStatus').textContent = 'SYNC';
+          document.getElementById('wsDot').className = 'relative inline-flex rounded-full h-2 w-2 bg-sky-400';
+        }
+      } catch {}
+    }
+    function startHttpFallback() { if (!httpPollTimer) { fetchRestOnce(); httpPollTimer = setInterval(fetchRestOnce, 8000); } }
+
+    function connectWebSocket() {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) { ws.onclose = null; ws.onerror = null; ws.close(); ws = null; }
+
+      const cached = Store.get(Store.KEYS.CACHE_PREFIX + currentInterval);
+      if (cached) applyFullData(cached, true);
+      else document.getElementById('loader').style.display = 'flex';
+
+      if (!navigator.onLine || document.hidden) return;
+
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${protocol}//${location.host}/ws/gold/${currentInterval}`);
+      ws.onopen = () => {
+        wsFailCount = 0; reconnectDelay = 2500; stopHttpFallback();
+        document.getElementById('wsStatus').textContent = 'LIVE';
+        document.getElementById('wsDot').className = 'relative inline-flex rounded-full h-2 w-2 bg-emerald-500';
+      };
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'ping') return;
+          if (msg.type === 'full') applyFullData(msg, false);
+          else if (msg.type === 'tick' && !directWs) applyTick(msg);
+        } catch {}
+      };
+      ws.onclose = () => {
+        wsFailCount++;
+        document.getElementById('wsStatus').textContent = 'SYNC';
+        document.getElementById('wsDot').className = 'relative inline-flex rounded-full h-2 w-2 bg-yellow-500';
+        if (wsFailCount >= 2) startHttpFallback();
+        if (!document.hidden && navigator.onLine) {
+          reconnectTimer = setTimeout(connectWebSocket, reconnectDelay);
+          reconnectDelay = Math.min(reconnectDelay * 1.5, 15000);
+        }
+      };
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { if (reconnectTimer) clearTimeout(reconnectTimer); stopHttpFallback(); stopDirectStream(); }
+      else { connectWebSocket(); if (useDirectStream) startDirectStream(); }
+    });
+    window.addEventListener('online', () => { document.getElementById('offlineBar').classList.add('hidden'); connectWebSocket(); });
+    window.addEventListener('offline', () => {
+      stopDirectStream();
+      document.getElementById('offlineBar').classList.remove('hidden');
+      document.getElementById('wsStatus').textContent = 'OFFLINE';
+      document.getElementById('wsDot').className = 'relative inline-flex rounded-full h-2 w-2 bg-rose-500';
+    });
+
+    function setActiveTfButton(tf) {
+      document.querySelectorAll('.tf-btn').forEach(b => b.classList.toggle('active', b.dataset.tf === tf));
+    }
+    let tfDebounce = null;
+    function switchInterval(tf) {
+      if (tf === currentInterval) return;
+      clearTimeout(tfDebounce);
+      tfDebounce = setTimeout(() => {
+        currentInterval = tf; isFirstLoad = true; lastCandle = null;
+        Store.set(Store.KEYS.TF, tf); setActiveTfButton(tf); connectWebSocket();
+      }, 120);
+    }
+
+    // ==================== AI COPILOT ====================
+    function renderQuestionList(list) {
+      const c = document.getElementById('questionList');
+      if (!list.length) {
+        c.innerHTML = '<div class="px-3.5 py-3 text-[11px] text-amber-300">មិនមានសំណួរត្រូវគ្នាក្នុងប្រព័ន្ធទេ។ សូមលុបអក្សរចេញ ដើម្បីមើលបញ្ជីសំណួរទាំង ១០។</div>';
+        return;
+      }
+      c.innerHTML = list.map(q => `
+        <button type="button" onclick="selectSystemQuestion('${q.id}')"
+          class="w-full text-left px-3.5 py-2.5 hover:bg-yellow-400/10 flex items-center justify-between gap-2 transition">
+          <span class="text-xs text-gray-100">${escHtml(q.text)}</span>
+          <span class="shrink-0 text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-yellow-300 border border-white/10 font-semibold">${escHtml(q.tag)}</span>
+        </button>`).join('');
+    }
+    function openQuestionDropdown() { document.getElementById('questionDropdown').classList.remove('hidden'); filterQuestions(document.getElementById('aiInput').value); }
+    function hideQuestionDropdown() { document.getElementById('questionDropdown').classList.add('hidden'); }
+    function toggleQuestionDropdown() {
+      const dd = document.getElementById('questionDropdown');
+      dd.classList.contains('hidden') ? openQuestionDropdown() : hideQuestionDropdown();
+    }
+    function filterQuestions(q) {
+      const s = (q || '').trim().toLowerCase();
+      document.getElementById('politeNotice').classList.add('hidden');
+      renderQuestionList(!s ? SYSTEM_QUESTIONS : SYSTEM_QUESTIONS.filter(i => i.text.toLowerCase().includes(s) || i.tag.toLowerCase().includes(s)));
+    }
+    function showPoliteNotice() {
+      const n = document.getElementById('politeNotice'), inp = document.getElementById('aiInput');
+      n.classList.remove('hidden'); inp.classList.remove('input-shake'); void inp.offsetWidth; inp.classList.add('input-shake');
+      renderQuestionList(SYSTEM_QUESTIONS); document.getElementById('questionDropdown').classList.remove('hidden');
+      if (noticeTimer) clearTimeout(noticeTimer);
+      noticeTimer = setTimeout(() => n.classList.add('hidden'), 6500);
+    }
+    function selectSystemQuestion(id) {
+      const item = SYSTEM_QUESTIONS.find(q => q.id === id);
+      if (!item) return;
+      document.getElementById('aiInput').value = '';
+      document.getElementById('politeNotice').classList.add('hidden');
+      hideQuestionDropdown(); askAI(item.text, item.id);
+    }
+    function handleChatSubmit(e) {
+      e.preventDefault();
+      if (isAiBusy) return;
+      const val = document.getElementById('aiInput').value.trim();
+      if (!val) { openQuestionDropdown(); return; }
+      const match = SYSTEM_QUESTIONS.find(q => q.text.toLowerCase() === val.toLowerCase());
+      if (match) selectSystemQuestion(match.id);
+      else showPoliteNotice();
+    }
+
+    function formatBold(t) { return escHtml(t).replace(/\*\*(.*?)\*\*/g, '<b class="text-yellow-300 font-semibold">$1</b>'); }
+    function renderChatHistory() {
+      const box = document.getElementById('aiMessages');
+      if (!chatHistory.length) {
+        box.innerHTML = `<div class="bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm p-3.5 text-gray-200 space-y-1"><div class="text-yellow-400 font-bold text-xs">Gold Quant AI រួចរាល់សម្រាប់វិភាគ</div><p class="text-xs text-gray-300">ចុចលើប្រអប់ខាងក្រោម ដើម្បីជ្រើសរើសសំណួរវិភាគទាំង ១០ មុខ (MTF, USD News, PDH/PDL, Entry និង SL/TP)។</p></div>`;
+        return;
+      }
+      box.innerHTML = chatHistory.map(item => {
+        if (item.role === 'user') return `<div class="ml-8 bg-yellow-400 text-[#080c14] font-semibold rounded-2xl rounded-tr-sm px-3.5 py-2.5 shadow">${escHtml(item.text)}</div>`;
+        const lines = (item.lines || []).map(l => `<li>${formatBold(l)}</li>`).join('');
+        return `<div class="mr-2 bg-slate-900/90 border border-white/10 rounded-2xl rounded-tl-sm p-3 text-gray-200 space-y-1.5"><div class="flex items-center justify-between gap-2 border-b border-white/10 pb-1.5"><span class="font-bold text-yellow-400 text-xs">${escHtml(item.title)}</span><span class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-400/15 text-yellow-300 font-bold border border-yellow-400/25">${escHtml(item.badge || '')}</span></div><ul class="space-y-1 list-disc list-inside text-xs">${lines}</ul></div>`;
+      }).join('');
+      box.scrollTop = box.scrollHeight;
+    }
+    function clearChatHistory() { chatHistory = []; Store.set(Store.KEYS.CHAT, []); renderChatHistory(); }
+
+    async function askAI(text, preset) {
+      if (isAiBusy || !preset) return;
+      isAiBusy = true; document.getElementById('aiSendBtn').disabled = true;
+      chatHistory.push({ role: 'user', text }); Store.set(Store.KEYS.CHAT, chatHistory.slice(-24)); renderChatHistory();
+
+      const box = document.getElementById('aiMessages');
+      const ld = document.createElement('div');
+      ld.className = 'mr-6 bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm p-3 text-yellow-300 text-xs';
+      ld.textContent = 'កំពុងវិភាគ MTF, ព័ត៌មាន USD និងទិន្នន័យជាក់ស្តែង...';
+      box.appendChild(ld); box.scrollTop = box.scrollHeight;
+
+      const ctrl = new AbortController(), tid = setTimeout(() => ctrl.abort(), 12000);
+      try {
+        const res = await fetch('/api/ai-chat', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text, interval: currentInterval, preset }), signal: ctrl.signal
+        });
+        const data = await res.json();
+        chatHistory.push({ role: 'ai', title: data.title, badge: data.badge, lines: data.lines });
+        Store.set(Store.KEYS.CHAT, chatHistory.slice(-24));
+      } catch {
+        chatHistory.push({ role: 'ai', title: 'ការភ្ជាប់យឺតបណ្តោះអាសន្ន', badge: 'RETRY', lines: ['សូមពិនិត្យអ៊ីនធឺណិត រួចសាកល្បងចុចម្តងទៀត។'] });
+      } finally {
+        clearTimeout(tid); isAiBusy = false; document.getElementById('aiSendBtn').disabled = false; renderChatHistory();
+      }
+    }
+
+    // Init
+    document.getElementById('chkSignals').checked = uiPrefs.showSignals;
+    document.getElementById('chkZones').checked = uiPrefs.showZones !== false;
+    document.getElementById('chkSlTp').checked = uiPrefs.showSlTp;
+    document.getElementById('toggleInstBtn').textContent = `PDH/Asian: ${uiPrefs.showInst ? 'ON' : 'OFF'}`;
+    toggleAISection(uiPrefs.showAI, false);
+
+    setActiveTfButton(currentInterval);
+    renderChatHistory();
+    renderAlerts();
+    renderJournal();
+    updateLotCalc();
+    connectWebSocket();
+  </script>
+</body>
+</html>
