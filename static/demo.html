@@ -1,0 +1,1476 @@
+<!DOCTYPE html>
+<html lang="km">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#070b13" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>TRI PISAL • XAU/USD Demo Trading (V8 SMC AI)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    * { box-sizing: border-box; }
+    html {
+      background: #070b13;
+      -webkit-text-size-adjust: 100%;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      min-height: 100dvh;
+      overflow-x: clip;
+      overscroll-behavior-x: none;
+      background: #070b13;
+      background-image:
+        radial-gradient(circle at 50% 0%, rgba(250, 204, 21, 0.085) 0%, rgba(7, 11, 19, 0) 52%),
+        radial-gradient(circle at 85% 25%, rgba(56, 189, 248, 0.04) 0%, rgba(7, 11, 19, 0) 40%);
+      color: #f3f4f6;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Khmer OS Siemreap', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -webkit-tap-highlight-color: transparent;
+      padding-bottom: calc(2rem + env(safe-area-inset-bottom));
+    }
+    .glass {
+      background: rgba(13, 19, 34, 0.86);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+    }
+    .brand-text {
+      background: linear-gradient(135deg, #fef08a 0%, #facc15 45%, #d97706 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .tf-btn.active {
+      background: linear-gradient(135deg, #fde047, #ca8a04);
+      color: #070b13;
+      font-weight: 800;
+      box-shadow: 0 2px 10px rgba(234, 179, 8, 0.3);
+    }
+    .tab-btn.active {
+      color: #facc15;
+      border-bottom: 2px solid #facc15;
+    }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    #chartStage { touch-action: pan-y; }
+
+    /* Draggable V8 HUD */
+    #demoHud {
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      cursor: grab;
+    }
+    #demoHud.is-dragging {
+      cursor: grabbing;
+      opacity: 0.92;
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.85);
+    }
+
+    #chartCard.is-fullscreen {
+      position: fixed;
+      inset: 0;
+      z-index: 90;
+      width: 100vw;
+      height: 100dvh;
+      border-radius: 0;
+      border: none;
+      background: #070b13;
+      display: flex;
+      flex-direction: column;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+    #chartCard.is-fullscreen #chartStage { flex: 1; height: 100%; touch-action: none; }
+    #chartCard.is-fullscreen #chart { height: 100% !important; }
+
+    /* GPU Live Price + Countdown Pill */
+    #axisLivePill {
+      position: absolute;
+      top: 0;
+      right: 0;
+      z-index: 16;
+      pointer-events: none;
+      min-width: 72px;
+      padding: 2px 6px;
+      border-radius: 4px 0 0 4px;
+      text-align: right;
+      line-height: 1.15;
+      will-change: transform;
+      transition: background-color 0.08s linear;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+    }
+  </style>
+</head>
+<body class="flex flex-col">
+
+  <!-- Compact Single-Row Header -->
+  <header class="sticky top-0 z-30 glass border-b border-white/10 px-3 sm:px-4 py-2">
+    <div class="max-w-6xl mx-auto flex items-center justify-between gap-2">
+      <div class="flex items-center gap-2 min-w-0">
+        <a href="/" title="ត្រឡប់វិភាគ" class="w-8 h-8 sm:w-auto sm:px-2.5 sm:py-1.5 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 flex items-center justify-center gap-1 text-xs font-bold text-gray-200 transition shrink-0">
+          <i data-lucide="arrow-left" class="w-4 h-4"></i>
+          <span class="hidden sm:inline">ត្រឡប់វិភាគ</span>
+        </a>
+        <div class="min-w-0">
+          <div class="flex items-center gap-1.5">
+            <span class="text-xs sm:text-sm font-black tracking-wide brand-text whitespace-nowrap">TRI PISAL</span>
+            <span class="text-[9px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-400/30 font-bold whitespace-nowrap">DEMO</span>
+            <span class="relative flex h-2 w-2 shrink-0">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span id="wsDot" class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+          </div>
+          <div class="text-[10px] text-gray-400 whitespace-nowrap">XAU/USD • 1 Lot = 100 oz</div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 shrink-0">
+        <div class="text-right">
+          <div id="livePrice" class="text-base sm:text-xl font-black tabular-nums text-white leading-tight transition-colors duration-75">----.--</div>
+          <div id="spreadTop" class="text-[9.5px] text-gray-400 tabular-nums whitespace-nowrap">Spread: --</div>
+        </div>
+        <button onclick="openResetModal()" title="Reset ដើមទុន" class="w-8 h-8 sm:w-auto sm:px-2.5 sm:py-1.5 rounded-xl bg-white/5 hover:bg-rose-500/20 border border-white/10 flex items-center justify-center gap-1 text-gray-300 hover:text-rose-300 transition shrink-0">
+          <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+          <span class="hidden sm:inline text-xs font-bold">Reset</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="hidden fixed top-14 left-3 right-3 sm:left-auto sm:right-4 sm:w-80 z-50 px-3.5 py-2.5 rounded-xl text-xs font-bold shadow-2xl border text-center sm:text-left"></div>
+
+  <main class="flex-1 max-w-6xl w-full mx-auto px-3 sm:px-4 py-2.5 space-y-2.5">
+
+    <!-- Unified Account Summary Card (MT5 Mobile Style) -->
+    <section class="glass rounded-2xl p-3">
+      <div class="flex items-center justify-between pb-2.5 border-b border-white/10">
+        <div>
+          <div class="text-[10px] text-gray-400 font-medium">សមតុល្យជាក់ស្តែង (Equity)</div>
+          <div id="accEquity" class="text-lg sm:text-xl font-black text-white tabular-nums">$1,000.00</div>
+        </div>
+        <div class="text-right">
+          <div class="text-[10px] text-gray-400 font-medium">កំពុងរត់ (Floating)</div>
+          <div id="accFloating" class="text-lg sm:text-xl font-black text-gray-300 tabular-nums">$0.00</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-3 gap-2 pt-2 text-center sm:text-left">
+        <div>
+          <div class="text-[9.5px] text-gray-400">ដើមទុន (Balance)</div>
+          <div id="accBalance" class="text-xs sm:text-sm font-bold text-gray-200 tabular-nums">$1,000.00</div>
+        </div>
+        <div>
+          <div class="text-[9.5px] text-gray-400">Free Margin</div>
+          <div id="accFreeMargin" class="text-xs sm:text-sm font-bold text-sky-300 tabular-nums">$1,000.00</div>
+        </div>
+        <div class="text-right sm:text-left">
+          <div class="text-[9.5px] text-gray-400">Win / Net PnL</div>
+          <div class="text-xs sm:text-sm font-bold tabular-nums">
+            <span id="accWinRate" class="text-yellow-400">0%</span>
+            <span class="text-gray-600 mx-0.5">•</span>
+            <span id="accNetPnl" class="text-gray-300">$0.00</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- V8 + SMC + War Intelligence Live Advisor Card -->
+    <section id="v8Card" class="glass rounded-2xl p-3 border-l-4 border-l-amber-400 space-y-2">
+      <div class="flex items-start justify-between gap-2">
+        <div class="flex items-start gap-2 min-w-0">
+          <div id="v8IconBox" class="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-400/30 flex items-center justify-center text-amber-300 shrink-0 mt-0.5">
+            <i data-lucide="brain-circuit" class="w-4 h-4"></i>
+          </div>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="text-[10px] font-black uppercase tracking-wider text-yellow-400">V8 AI ប្រាប់ផ្ទាល់</span>
+              <span id="v8GradeBadge" class="text-[9.5px] px-1.5 py-0.5 rounded bg-white/10 text-gray-200 font-bold tabular-nums">--</span>
+              <span id="v8WarBadge" class="hidden text-[9px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/35 font-bold">WAR</span>
+            </div>
+            <div id="v8StatusText" class="text-xs sm:text-sm font-black text-amber-300 leading-snug mt-0.5">កំពុងវិភាគទីផ្សារ...</div>
+          </div>
+        </div>
+        <button onclick="fillFromAI()" class="px-2.5 py-1.5 rounded-xl bg-yellow-400/15 hover:bg-yellow-400/25 border border-yellow-400/35 text-[10.5px] font-bold text-yellow-300 active:scale-95 transition shrink-0 whitespace-nowrap">
+          ដាក់ SL/TP តាម AI
+        </button>
+      </div>
+
+      <div class="bg-black/30 rounded-xl px-2.5 py-2 border border-white/5 space-y-1 text-[11px] leading-relaxed">
+        <div class="flex items-start gap-1.5 text-gray-200">
+          <i data-lucide="activity" class="w-3.5 h-3.5 text-sky-400 shrink-0 mt-0.5"></i>
+          <span><b class="text-sky-300">ស្ថានភាពទីផ្សារ៖</b> <span id="v8MarketText">កំពុងតាមដាននិន្នាការ...</span></span>
+        </div>
+        <div class="flex items-start gap-1.5 text-gray-300">
+          <i data-lucide="info" class="w-3.5 h-3.5 text-yellow-400 shrink-0 mt-0.5"></i>
+          <span id="v8ReasonText">កំពុងផ្ទៀងផ្ទាត់ MTF, SMC និងព័ត៌មានពិភពលោក...</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Chart + Order Execution Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-2.5">
+
+      <!-- Left: Live Chart with SMC Overlay & Draggable Collapsible V8 HUD (8 cols) -->
+      <div id="chartCard" class="lg:col-span-8 glass rounded-2xl overflow-hidden flex flex-col">
+        <div class="flex flex-wrap items-center justify-between gap-1.5 px-2.5 py-2 border-b border-white/10 bg-[#0b1120]/90">
+          <div class="flex items-center gap-1 overflow-x-auto no-scrollbar">
+            <button data-tf="1m" onclick="switchTf('1m')" class="tf-btn px-2 py-1 text-[11px] rounded-lg text-gray-300 transition">1m</button>
+            <button data-tf="5m" onclick="switchTf('5m')" class="tf-btn px-2 py-1 text-[11px] rounded-lg text-gray-300 transition">5m</button>
+            <button data-tf="15m" onclick="switchTf('15m')" class="tf-btn px-2 py-1 text-[11px] rounded-lg text-gray-300 transition">15m</button>
+            <button data-tf="1h" onclick="switchTf('1h')" class="tf-btn px-2 py-1 text-[11px] rounded-lg text-gray-300 transition">1H</button>
+            <button data-tf="4h" onclick="switchTf('4h')" class="tf-btn px-2 py-1 text-[11px] rounded-lg text-gray-300 transition">4H</button>
+          </div>
+          <div class="flex items-center gap-1 text-[10px]">
+            <button onclick="toggleSmc()" id="btnSmcToggle" class="px-2 py-1 rounded-lg bg-blue-500/15 text-blue-300 border border-blue-400/30 font-bold">SMC: ON</button>
+            <button onclick="toggleHudVisible()" id="btnHudToggle" class="px-2 py-1 rounded-lg bg-sky-500/15 text-sky-300 border border-sky-400/30 font-bold">HUD: ON</button>
+            <button onclick="resetChartView()" title="តម្រឹមក្រាហ្វិក" class="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/15 text-gray-200 border border-white/10">
+              <i data-lucide="crosshair" class="w-3 h-3"></i>
+            </button>
+            <button onclick="toggleFullscreen()" title="ពេញអេក្រង់" class="px-2 py-1 rounded-lg bg-yellow-400/15 text-yellow-300 border border-yellow-400/30 font-bold flex items-center gap-1">
+              <i id="fsIconEnter" data-lucide="maximize" class="w-3 h-3"></i>
+              <i id="fsIconExit" data-lucide="minimize" class="w-3 h-3 hidden"></i>
+            </button>
+          </div>
+        </div>
+
+        <div id="chartStage" class="relative w-full overflow-hidden">
+          <div id="chart" class="w-full h-[310px] sm:h-[430px]"></div>
+
+          <!-- Watermark TRI PISAL -->
+          <div class="pointer-events-none select-none absolute inset-0 flex items-center justify-center pr-16 opacity-[0.045]">
+            <span class="text-2xl sm:text-4xl font-black tracking-[0.25em] text-yellow-300">TRI PISAL</span>
+          </div>
+
+          <!-- SMC + BUY/SELL Canvas Overlay -->
+          <canvas id="signalCanvas" class="pointer-events-none absolute inset-0 z-10"></canvas>
+
+          <!-- GPU Live Price + Countdown Pill -->
+          <div id="axisLivePill" class="hidden bg-[#2962ff] text-white">
+            <div id="pillPrice" class="text-[11px] font-black tabular-nums tracking-tight">----.--</div>
+            <div id="pillTimer" class="text-[9.5px] font-bold tabular-nums opacity-95">--:--</div>
+          </div>
+
+          <!-- COMPACT DRAGGABLE & COLLAPSIBLE V8 HUD (Synced 100% with index.html) -->
+          <div id="demoHud" style="top: 8px; left: 8px;" class="absolute z-20 rounded-xl bg-[#070d19]/92 backdrop-blur-md border border-white/15 border-l-[3px] border-l-yellow-400 px-2.5 py-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.75)] text-[10px]">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <i data-lucide="grip-vertical" class="w-3 h-3 text-gray-500 shrink-0"></i>
+                <span id="hudDot" class="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0"></span>
+                <span id="hudSide" class="text-[11px] font-black tracking-wide text-yellow-400">WAIT</span>
+                <span id="hudGrade" class="text-[8.5px] px-1 py-0.5 rounded bg-white/10 text-gray-200 font-extrabold tabular-nums">V8</span>
+              </div>
+              <button id="hudToggleBtn" type="button" onclick="toggleHudCollapse(event)" title="បង្រួម / ពង្រីក"
+                class="w-5 h-5 rounded-md bg-white/10 hover:bg-white/20 text-gray-200 flex items-center justify-center shrink-0 transition">
+                <i id="hudChevron" data-lucide="chevron-down" class="w-3 h-3"></i>
+              </button>
+            </div>
+
+            <!-- Compact 1-Line Summary -->
+            <div id="hudMiniRow" class="flex items-center gap-2 mt-1 pt-1 border-t border-white/10 text-[9.5px] tabular-nums whitespace-nowrap">
+              <span class="text-rose-400 font-bold">SL <span id="hudMiniSl">--</span></span>
+              <span class="text-gray-600">•</span>
+              <span class="text-emerald-400 font-bold">TP <span id="hudMiniTp">--</span></span>
+            </div>
+
+            <!-- Expanded Details -->
+            <div id="hudBody" class="hidden mt-1.5 pt-1.5 border-t border-white/10 space-y-1 w-[158px] sm:w-[178px]">
+              <div class="flex items-center justify-between gap-1">
+                <span class="text-gray-400">Entry</span>
+                <div class="flex items-center gap-1">
+                  <span id="hudEntry" class="font-black text-white tabular-nums">--</span>
+                  <span id="hudEntryState" class="text-[8px] px-1 py-0.5 rounded bg-white/10 text-gray-300 font-bold">--</span>
+                </div>
+              </div>
+              <div class="flex items-center justify-between gap-1">
+                <span class="text-gray-400">Stop Loss</span>
+                <span class="tabular-nums">
+                  <b id="hudSl" class="text-rose-400">--</b>
+                  <span id="hudSlPips" class="text-[8.5px] text-rose-300/80 ml-0.5"></span>
+                </span>
+              </div>
+              <div class="flex items-center justify-between gap-1">
+                <span class="text-gray-400">TP 1</span>
+                <span class="tabular-nums">
+                  <b id="hudTp" class="text-emerald-400">--</b>
+                  <span id="hudTpPips" class="text-[8.5px] text-emerald-300/80 ml-0.5"></span>
+                </span>
+              </div>
+              <div class="flex items-center justify-between gap-1">
+                <span class="text-gray-400">TP 2</span>
+                <span class="tabular-nums">
+                  <b id="hudTp2" class="text-emerald-300/90">--</b>
+                  <span id="hudTp2Pips" class="text-[8.5px] text-emerald-300/70 ml-0.5"></span>
+                </span>
+              </div>
+              <div class="pt-1 border-t border-white/10 space-y-1">
+                <div class="flex items-center justify-between text-[9px]">
+                  <span class="text-gray-400">R : R</span>
+                  <span id="hudRr" class="font-black text-sky-300 tabular-nums">--</span>
+                </div>
+                <div class="w-full h-1 rounded-full bg-white/10 overflow-hidden">
+                  <div id="hudProgBar" class="h-full bg-sky-400 transition-all duration-200" style="width: 50%"></div>
+                </div>
+                <div class="flex items-center justify-between text-[8px] text-gray-500 font-bold">
+                  <span>SL</span>
+                  <span id="hudProgTxt" class="text-gray-300 tabular-nums">Live</span>
+                  <span>TP1</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Mobile-Optimized Order Ticket (4 cols) -->
+      <div class="lg:col-span-4 glass rounded-2xl p-3.5 flex flex-col justify-between space-y-3">
+        <div class="space-y-3">
+          <div class="flex items-center justify-between border-b border-white/10 pb-2">
+            <span class="text-xs font-black uppercase tracking-wider text-yellow-400">បញ្ជាទិញ / លក់ (Market)</span>
+            <span id="lotPipVal" class="text-[10.5px] text-sky-300 font-bold tabular-nums">$1.00 / $1 move</span>
+          </div>
+
+          <!-- Lot Size Stepper + Quick Pills -->
+          <div>
+            <div class="flex items-center gap-1.5 mb-2">
+              <button type="button" onclick="stepLot(-0.01)" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 flex items-center justify-center text-white font-black text-base active:scale-95 transition">−</button>
+              <div class="relative flex-1">
+                <input id="inpLot" type="number" value="0.01" min="0.01" max="10" step="0.01" oninput="updateLotInfo()"
+                  class="w-full h-10 bg-black/40 border border-white/15 rounded-xl px-3 text-center text-base font-black text-white tabular-nums focus:outline-none focus:border-yellow-400" />
+                <span class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-400 font-semibold">Lot</span>
+              </div>
+              <button type="button" onclick="stepLot(0.01)" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 flex items-center justify-center text-white font-black text-base active:scale-95 transition">+</button>
+            </div>
+            <div class="grid grid-cols-4 gap-1.5">
+              <button type="button" onclick="setLot(0.01)" class="py-1.5 rounded-lg bg-white/5 hover:bg-white/15 border border-white/5 text-[11px] font-bold active:scale-95">0.01</button>
+              <button type="button" onclick="setLot(0.05)" class="py-1.5 rounded-lg bg-white/5 hover:bg-white/15 border border-white/5 text-[11px] font-bold active:scale-95">0.05</button>
+              <button type="button" onclick="setLot(0.10)" class="py-1.5 rounded-lg bg-white/5 hover:bg-white/15 border border-white/5 text-[11px] font-bold active:scale-95">0.10</button>
+              <button type="button" onclick="setLot(0.50)" class="py-1.5 rounded-lg bg-white/5 hover:bg-white/15 border border-white/5 text-[11px] font-bold active:scale-95">0.50</button>
+            </div>
+          </div>
+
+          <!-- SL & TP Inputs -->
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-[10.5px] text-rose-400 font-bold mb-1">Stop Loss ($)</label>
+              <input id="inpSl" type="number" step="0.1" placeholder="គ្មាន"
+                class="w-full bg-black/40 border border-rose-500/30 rounded-xl px-3 py-2 text-xs font-bold text-white tabular-nums focus:outline-none focus:border-rose-400" />
+            </div>
+            <div>
+              <label class="block text-[10.5px] text-emerald-400 font-bold mb-1">Take Profit ($)</label>
+              <input id="inpTp" type="number" step="0.1" placeholder="គ្មាន"
+                class="w-full bg-black/40 border border-emerald-500/30 rounded-xl px-3 py-2 text-xs font-bold text-white tabular-nums focus:outline-none focus:border-emerald-400" />
+            </div>
+          </div>
+
+          <!-- Quick Auto SL/TP -->
+          <div class="flex items-center justify-between gap-1.5 text-[10.5px]">
+            <span class="text-gray-400">SL/TP រហ័ស:</span>
+            <div class="flex gap-1.5">
+              <button type="button" onclick="quickSlTp(5, 10)" class="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/15 text-gray-200 font-semibold">$5/$10</button>
+              <button type="button" onclick="quickSlTp(10, 20)" class="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/15 text-gray-200 font-semibold">$10/$20</button>
+              <button type="button" onclick="clearSlTp()" class="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-rose-500/20 text-gray-400 font-semibold">លុប</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tactile SELL / BUY Buttons -->
+        <div class="grid grid-cols-2 gap-2.5 pt-1">
+          <button onclick="placeOrder('SELL')" class="py-3 px-2 rounded-2xl bg-gradient-to-b from-rose-500 to-rose-600 hover:from-rose-400 hover:to-rose-500 active:scale-[0.97] transition text-white shadow-lg shadow-rose-600/25">
+            <div class="text-[10px] font-bold opacity-90">SELL (Bid)</div>
+            <div id="btnSellPrice" class="text-base sm:text-lg font-black tabular-nums mt-0.5">----.--</div>
+          </button>
+          <button onclick="placeOrder('BUY')" class="py-3 px-2 rounded-2xl bg-gradient-to-b from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 active:scale-[0.97] transition text-white shadow-lg shadow-emerald-600/25">
+            <div class="text-[10px] font-bold opacity-90">BUY (Ask)</div>
+            <div id="btnBuyPrice" class="text-base sm:text-lg font-black tabular-nums mt-0.5">----.--</div>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Open Positions & History (Mobile Cards + Desktop Table) -->
+    <div class="glass rounded-2xl overflow-hidden">
+      <div class="flex items-center justify-between px-3.5 border-b border-white/10 bg-[#0b1120]/70">
+        <div class="flex gap-4">
+          <button id="tabOpen" onclick="switchTab('open')" class="tab-btn active py-3 text-xs font-bold transition">
+            កំពុងបើក (<span id="openCount">0</span>)
+          </button>
+          <button id="tabHistory" onclick="switchTab('history')" class="tab-btn py-3 text-xs font-bold text-gray-400 transition">
+            ប្រវត្តិបិទរួច (<span id="histCount">0</span>)
+          </button>
+        </div>
+        <button id="btnCloseAll" onclick="closeAllPositions()" class="hidden px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 border border-rose-500/35 text-[10px] font-bold text-rose-300 active:scale-95">
+          បិទទាំងអស់
+        </button>
+      </div>
+
+      <!-- OPEN POSITIONS PANEL -->
+      <div id="panelOpen" class="p-3">
+        <div id="openCardsMobile" class="md:hidden space-y-2"></div>
+        <div class="hidden md:block overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="text-[10px] text-gray-400 border-b border-white/10">
+              <tr>
+                <th class="pb-2">ទិសដៅ</th>
+                <th class="pb-2">Lot</th>
+                <th class="pb-2">តម្លៃចូល (Entry)</th>
+                <th class="pb-2">បច្ចុប្បន្ន</th>
+                <th class="pb-2">SL / TP</th>
+                <th class="pb-2 text-right">ចំណេញ/ខាត ($)</th>
+                <th class="pb-2 text-right">សកម្មភាព</th>
+              </tr>
+            </thead>
+            <tbody id="openBodyDesktop" class="divide-y divide-white/5"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- CLOSED HISTORY PANEL -->
+      <div id="panelHistory" class="hidden p-3">
+        <div id="histCardsMobile" class="md:hidden space-y-2"></div>
+        <div class="hidden md:block overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="text-[10px] text-gray-400 border-b border-white/10">
+              <tr>
+                <th class="pb-2">ម៉ោងបិទ</th>
+                <th class="pb-2">ទិសដៅ</th>
+                <th class="pb-2">Lot</th>
+                <th class="pb-2">Entry → Exit</th>
+                <th class="pb-2">មូលហេតុ</th>
+                <th class="pb-2 text-right">លទ្ធផល ($)</th>
+              </tr>
+            </thead>
+            <tbody id="histBodyDesktop" class="divide-y divide-white/5"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Reset Balance Modal -->
+  <div id="resetModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="glass rounded-2xl p-5 max-w-xs w-full space-y-4">
+      <div class="text-sm font-black text-white">កំណត់ដើមទុន Demo ឡើងវិញ</div>
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="resetAccount(500)" class="py-2.5 rounded-xl bg-white/5 hover:bg-yellow-400 hover:text-black font-bold text-xs transition">$500</button>
+        <button onclick="resetAccount(1000)" class="py-2.5 rounded-xl bg-white/5 hover:bg-yellow-400 hover:text-black font-bold text-xs transition">$1,000</button>
+        <button onclick="resetAccount(5000)" class="py-2.5 rounded-xl bg-white/5 hover:bg-yellow-400 hover:text-black font-bold text-xs transition">$5,000</button>
+        <button onclick="resetAccount(10000)" class="py-2.5 rounded-xl bg-white/5 hover:bg-yellow-400 hover:text-black font-bold text-xs transition">$10,000</button>
+      </div>
+      <button onclick="document.getElementById('resetModal').classList.add('hidden')" class="w-full py-2.5 rounded-xl bg-white/10 text-xs font-bold text-gray-300">បោះបង់</button>
+    </div>
+  </div>
+
+  <script>
+    lucide.createIcons();
+
+    function escHtml(str) {
+      return String(str ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    }
+
+    const STORAGE_KEY = 'tp_demo_account_v1';
+    const PREFS_KEY = 'tp_demo_prefs_v2';
+    const COMM_PER_LOT = 7.0;
+    const CONTRACT_OZ = 100;
+    const LEVERAGE = 100;
+    const TF_SEC = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400 };
+
+    let state = loadState();
+    let prefs = loadPrefs();
+    let currentTf = prefs.tf || '15m';
+
+    let liveBid = 0, liveAsk = 0, liveMid = 0, lastLiveMid = 0, liveSpread = 0.25;
+    let forexOffset = 0, lastRawCrypto = 0, directSourceType = '';
+    let lastCandle = null, candleCount = 0, lastBrain = null, lastSetup = null;
+    let lastChartSignals = [], lastSmc = null, activePlan = null, activeSide = 'WAIT';
+    let ws = null, directWs = null, directRetryTimer = null, wsRetryTimer = null, orderLines = [];
+    let isFullscreen = false, isFirstLoad = true, tickRaf = null, overlayRaf = null;
+    let pendingTick = null, lastOverlayTickTs = 0, tickFlashTimer = null, toastTimer = null;
+
+    const domLivePrice = document.getElementById('livePrice');
+    const domSpreadTop = document.getElementById('spreadTop');
+    const domBtnSell = document.getElementById('btnSellPrice');
+    const domBtnBuy = document.getElementById('btnBuyPrice');
+    const domAxisPill = document.getElementById('axisLivePill');
+    const domPillPrice = document.getElementById('pillPrice');
+    const domPillTimer = document.getElementById('pillTimer');
+    const chartStageEl = document.getElementById('chartStage');
+    const demoHudEl = document.getElementById('demoHud');
+
+    function loadState() {
+      try {
+        const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
+        if (s && typeof s.balance === 'number') return s;
+      } catch {}
+      return { initialBalance: 1000, balance: 1000, positions: [], history: [] };
+    }
+    function saveState() {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
+    }
+
+    function loadPrefs() {
+      const def = { tf: '15m', showSmc: true, showHud: true, hudCollapsed: window.innerWidth < 640 };
+      try {
+        const p = JSON.parse(localStorage.getItem(PREFS_KEY));
+        return p ? { ...def, ...p } : def;
+      } catch { return def; }
+    }
+    function savePrefs() {
+      try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch {}
+    }
+
+    function showToast(msg, type = 'info') {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = `fixed top-14 left-3 right-3 sm:left-auto sm:right-4 sm:w-80 z-50 px-3.5 py-2.5 rounded-xl text-xs font-bold shadow-2xl border text-center sm:text-left ${
+        type === 'win' ? 'bg-emerald-500 text-black border-emerald-300'
+        : type === 'loss' ? 'bg-rose-600 text-white border-rose-400'
+        : 'bg-yellow-400 text-black border-yellow-200'
+      }`;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.add('hidden'), 3000);
+    }
+
+    // ==================== DRAGGABLE & COLLAPSIBLE V8 HUD ====================
+    function applyHudCollapseState() {
+      const collapsed = Boolean(prefs.hudCollapsed);
+      document.getElementById('hudBody').classList.toggle('hidden', collapsed);
+      document.getElementById('hudMiniRow').classList.toggle('hidden', !collapsed);
+      const chev = document.getElementById('hudChevron');
+      if (chev) chev.style.transform = collapsed ? 'rotate(0deg)' : 'rotate(180deg)';
+      clampHudInsideStage();
+    }
+
+    function toggleHudCollapse(e) {
+      if (e) e.stopPropagation();
+      prefs.hudCollapsed = !prefs.hudCollapsed;
+      savePrefs();
+      applyHudCollapseState();
+    }
+
+    function toggleHudVisible() {
+      prefs.showHud = !prefs.showHud;
+      savePrefs();
+      demoHudEl.classList.toggle('hidden', !prefs.showHud);
+      document.getElementById('btnHudToggle').textContent = `HUD: ${prefs.showHud ? 'ON' : 'OFF'}`;
+      if (prefs.showHud) clampHudInsideStage();
+    }
+
+    function toggleSmc() {
+      prefs.showSmc = !prefs.showSmc;
+      savePrefs();
+      document.getElementById('btnSmcToggle').textContent = `SMC: ${prefs.showSmc ? 'ON' : 'OFF'}`;
+      scheduleOverlay();
+    }
+
+    function clampHudInsideStage() {
+      const sw = chartStageEl.clientWidth, sh = chartStageEl.clientHeight;
+      const hw = demoHudEl.offsetWidth, hh = demoHudEl.offsetHeight;
+      if (!sw || !sh || !hw || !hh) return;
+      const curL = parseFloat(demoHudEl.style.left) || 8;
+      const curT = parseFloat(demoHudEl.style.top) || 8;
+      const maxL = Math.max(6, sw - hw - 72);
+      const maxT = Math.max(6, sh - hh - 26);
+      demoHudEl.style.left = `${Math.max(6, Math.min(curL, maxL))}px`;
+      demoHudEl.style.top = `${Math.max(6, Math.min(curT, maxT))}px`;
+    }
+
+    (function initHudDrag() {
+      let dragging = false, startX = 0, startY = 0, origL = 8, origT = 8;
+
+      demoHudEl.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('#hudToggleBtn')) return;
+        dragging = true;
+        demoHudEl.classList.add('is-dragging');
+        demoHudEl.setPointerCapture(e.pointerId);
+        startX = e.clientX; startY = e.clientY;
+        origL = parseFloat(demoHudEl.style.left) || demoHudEl.offsetLeft || 8;
+        origT = parseFloat(demoHudEl.style.top) || demoHudEl.offsetTop || 8;
+      });
+
+      demoHudEl.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        const sw = chartStageEl.clientWidth, sh = chartStageEl.clientHeight;
+        const hw = demoHudEl.offsetWidth, hh = demoHudEl.offsetHeight;
+        const maxL = Math.max(6, sw - hw - 68);
+        const maxT = Math.max(6, sh - hh - 24);
+        demoHudEl.style.left = `${Math.max(6, Math.min(origL + (e.clientX - startX), maxL))}px`;
+        demoHudEl.style.top = `${Math.max(6, Math.min(origT + (e.clientY - startY), maxT))}px`;
+      });
+
+      const endDrag = () => {
+        if (!dragging) return;
+        dragging = false;
+        demoHudEl.classList.remove('is-dragging');
+      };
+      demoHudEl.addEventListener('pointerup', endDrag);
+      demoHudEl.addEventListener('pointercancel', endDrag);
+    })();
+
+    // ==================== CHART + SMC CANVAS ====================
+    const chartEl = document.getElementById('chart');
+    const signalCanvas = document.getElementById('signalCanvas');
+    const sCtx = signalCanvas.getContext('2d');
+
+    const chart = LightweightCharts.createChart(chartEl, {
+      layout: { background: { color: 'transparent' }, textColor: '#cbd5e1', fontSize: 11 },
+      grid: { vertLines: { color: 'rgba(255,255,255,0.035)' }, horzLines: { color: 'rgba(255,255,255,0.035)' } },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)', autoScale: true, scaleMargins: { top: 0.14, bottom: 0.16 } },
+      timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true, secondsVisible: false, rightOffset: 7, barSpacing: 9, minBarSpacing: 3, fixLeftEdge: true },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+      handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
+    });
+
+    const candleSeries = chart.addCandlestickSeries({
+      upColor: '#00c896', downColor: '#ff4d6d',
+      borderUpColor: '#00e5a8', borderDownColor: '#ff6b86',
+      wickUpColor: '#00e5a8', wickDownColor: '#ff6b86',
+      lastValueVisible: false, priceLineVisible: true,
+      priceLineColor: '#38bdf8', priceLineWidth: 1, priceLineStyle: LightweightCharts.LineStyle.Dotted,
+    });
+    const ema20Series = chart.addLineSeries({ color: '#38bdf8', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false });
+    const ema50Series = chart.addLineSeries({ color: '#f59e0b', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false });
+
+    function drawRoundRect(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r); ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h); ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r); ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath();
+    }
+
+    function renderOverlayNow() {
+      overlayRaf = null;
+      const w = chartEl.clientWidth, h = chartEl.clientHeight;
+      if (!w || !h) return;
+
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      if (signalCanvas.width !== Math.round(w * dpr) || signalCanvas.height !== Math.round(h * dpr)) {
+        signalCanvas.width = Math.round(w * dpr);
+        signalCanvas.height = Math.round(h * dpr);
+        signalCanvas.style.width = `${w}px`;
+        signalCanvas.style.height = `${h}px`;
+      }
+
+      sCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      sCtx.clearRect(0, 0, w, h);
+      if (!prefs.showSmc) return;
+
+      const plotW = Math.max(0, w - 72), plotH = Math.max(0, h - 26);
+      const tsScale = chart.timeScale();
+
+      sCtx.save();
+      sCtx.beginPath(); sCtx.rect(0, 0, plotW, plotH); sCtx.clip();
+
+      if (lastSmc) {
+        for (const ob of (lastSmc.demand_blocks || [])) {
+          const yTop = candleSeries.priceToCoordinate(ob.top);
+          const yBot = candleSeries.priceToCoordinate(ob.bottom);
+          if (yTop === null || yBot === null) continue;
+          const rawX = tsScale.timeToCoordinate(ob.start_time);
+          const startX = rawX === null ? 0 : Math.max(0, Math.min(plotW - 24, rawX));
+          const topY = Math.min(yTop, yBot), boxH = Math.max(Math.abs(yBot - yTop), 10);
+          sCtx.fillStyle = 'rgba(59, 130, 246, 0.20)';
+          sCtx.fillRect(startX, topY, plotW - startX, boxH);
+          sCtx.strokeStyle = 'rgba(96, 165, 250, 0.45)';
+          sCtx.lineWidth = 1;
+          sCtx.beginPath(); sCtx.moveTo(startX, topY); sCtx.lineTo(plotW, topY); sCtx.moveTo(startX, topY + boxH); sCtx.lineTo(plotW, topY + boxH); sCtx.stroke();
+          if (boxH >= 12) {
+            sCtx.font = '700 8.5px system-ui, sans-serif';
+            sCtx.fillStyle = 'rgba(147, 197, 253, 0.85)';
+            sCtx.textAlign = 'left'; sCtx.textBaseline = 'middle';
+            sCtx.fillText(ob.label || 'OB', startX + 5, topY + boxH / 2);
+          }
+        }
+
+        for (const sob of (lastSmc.supply_blocks || [])) {
+          const yTop = candleSeries.priceToCoordinate(sob.top);
+          const yBot = candleSeries.priceToCoordinate(sob.bottom);
+          if (yTop === null || yBot === null) continue;
+          const rawX = tsScale.timeToCoordinate(sob.start_time);
+          const startX = rawX === null ? 0 : Math.max(0, Math.min(plotW - 24, rawX));
+          const topY = Math.min(yTop, yBot), boxH = Math.max(Math.abs(yBot - yTop), 10);
+          sCtx.fillStyle = 'rgba(244, 63, 94, 0.16)';
+          sCtx.fillRect(startX, topY, plotW - startX, boxH);
+          sCtx.strokeStyle = 'rgba(251, 113, 133, 0.45)';
+          sCtx.lineWidth = 1;
+          sCtx.beginPath(); sCtx.moveTo(startX, topY); sCtx.lineTo(plotW, topY); sCtx.moveTo(startX, topY + boxH); sCtx.lineTo(plotW, topY + boxH); sCtx.stroke();
+          if (boxH >= 12) {
+            sCtx.font = '700 8.5px system-ui, sans-serif';
+            sCtx.fillStyle = 'rgba(253, 164, 175, 0.88)';
+            sCtx.textAlign = 'left'; sCtx.textBaseline = 'middle';
+            sCtx.fillText(sob.label || 'OB', startX + 5, topY + boxH / 2);
+          }
+        }
+
+        for (const lv of (lastSmc.levels || [])) {
+          const y = candleSeries.priceToCoordinate(lv.price);
+          if (y === null || y < 8 || y > plotH - 8) continue;
+          const rawX = tsScale.timeToCoordinate(lv.time);
+          const startX = rawX === null ? 0 : Math.max(0, Math.min(plotW - 60, rawX));
+          const isHigh = lv.kind === 'high';
+          sCtx.strokeStyle = isHigh ? 'rgba(248, 113, 113, 0.78)' : 'rgba(52, 211, 153, 0.78)';
+          sCtx.lineWidth = 1.2;
+          sCtx.beginPath(); sCtx.moveTo(startX, y); sCtx.lineTo(plotW - 4, y); sCtx.stroke();
+          sCtx.font = '700 9px system-ui, sans-serif';
+          sCtx.fillStyle = isHigh ? '#fca5a5' : '#6ee7b7';
+          sCtx.textAlign = 'right';
+          sCtx.textBaseline = isHigh ? 'bottom' : 'top';
+          sCtx.fillText(lv.label, plotW - 8, isHigh ? y - 3 : y + 3);
+        }
+
+        for (const br of (lastSmc.breaks || [])) {
+          const y = candleSeries.priceToCoordinate(br.price);
+          const x1 = tsScale.timeToCoordinate(br.start_time);
+          const x2 = tsScale.timeToCoordinate(br.end_time);
+          if (y === null || x2 === null || x2 < 0 || (x1 !== null && x1 > plotW)) continue;
+          const sx = x1 === null ? 0 : Math.max(0, x1), ex = Math.min(plotW, x2);
+          if (ex - sx < 8) continue;
+          const isUp = br.type.endsWith('_UP');
+          sCtx.strokeStyle = isUp ? 'rgba(52, 211, 153, 0.78)' : 'rgba(248, 113, 113, 0.78)';
+          sCtx.lineWidth = 1; sCtx.setLineDash([4, 3]);
+          sCtx.beginPath(); sCtx.moveTo(sx, y); sCtx.lineTo(ex, y); sCtx.stroke();
+          sCtx.setLineDash([]);
+          sCtx.font = '800 8px system-ui, sans-serif';
+          sCtx.fillStyle = isUp ? '#6ee7b7' : '#fda4af';
+          sCtx.textAlign = 'center';
+          sCtx.textBaseline = isUp ? 'bottom' : 'top';
+          sCtx.fillText(br.label, (sx + ex) / 2, isUp ? y - 2 : y + 2);
+        }
+      }
+
+      if (Array.isArray(lastChartSignals)) {
+        for (const sig of lastChartSignals) {
+          const x = tsScale.timeToCoordinate(sig.time);
+          const y = candleSeries.priceToCoordinate(sig.price);
+          if (x === null || y === null || x < -30 || x > plotW + 30) continue;
+
+          if (sig.type === 'BUY') {
+            const bw = 38, bh = 19, bx = x - bw / 2, by = Math.min(plotH - bh - 4, y + 8);
+            sCtx.fillStyle = '#16c784';
+            sCtx.beginPath(); sCtx.moveTo(x, by - 4); sCtx.lineTo(x - 4, by + 1); sCtx.lineTo(x + 4, by + 1); sCtx.closePath(); sCtx.fill();
+            drawRoundRect(sCtx, bx, by, bw, bh, 4);
+            sCtx.fillStyle = '#16c784'; sCtx.fill();
+            sCtx.font = '800 9.5px system-ui, sans-serif'; sCtx.fillStyle = '#ffffff';
+            sCtx.textAlign = 'center'; sCtx.textBaseline = 'middle';
+            sCtx.fillText('BUY', x, by + bh / 2 + 0.5);
+          } else if (sig.type === 'SELL') {
+            const bw = 40, bh = 19, bx = x - bw / 2, by = Math.max(4, y - bh - 8);
+            sCtx.fillStyle = '#ef4444';
+            sCtx.beginPath(); sCtx.moveTo(x, by + bh + 4); sCtx.lineTo(x - 4, by + bh - 1); sCtx.lineTo(x + 4, by + bh - 1); sCtx.closePath(); sCtx.fill();
+            drawRoundRect(sCtx, bx, by, bw, bh, 4);
+            sCtx.fillStyle = '#ef4444'; sCtx.fill();
+            sCtx.font = '800 9.5px system-ui, sans-serif'; sCtx.fillStyle = '#ffffff';
+            sCtx.textAlign = 'center'; sCtx.textBaseline = 'middle';
+            sCtx.fillText('SELL', x, by + bh / 2 + 0.5);
+          }
+        }
+      }
+      sCtx.restore();
+    }
+
+    function scheduleOverlay() { if (!overlayRaf) overlayRaf = requestAnimationFrame(renderOverlayNow); }
+
+    function updateAxisLivePill(price, direction = 0) {
+      if (!price || isNaN(price)) return;
+      domPillPrice.textContent = price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      if (direction > 0) domAxisPill.style.backgroundColor = '#00a87e';
+      else if (direction < 0) domAxisPill.style.backgroundColor = '#e11d48';
+
+      const y = candleSeries.priceToCoordinate(price);
+      const stageH = chartEl.clientHeight;
+      if (y === null || y < 14 || y > stageH - 28) {
+        domAxisPill.classList.add('hidden');
+      } else {
+        domAxisPill.classList.remove('hidden');
+        domAxisPill.style.transform = `translate3d(0, ${y}px, 0) translateY(-50%)`;
+      }
+    }
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+      if (liveMid) updateAxisLivePill(liveMid, 0);
+      scheduleOverlay();
+    });
+    chart.timeScale().subscribeVisibleTimeRangeChange(scheduleOverlay);
+
+    new ResizeObserver(es => {
+      for (const e of es) {
+        if (e.contentRect.width > 0 && e.contentRect.height > 0) {
+          chart.applyOptions({ width: e.contentRect.width, height: e.contentRect.height });
+          requestAnimationFrame(() => {
+            if (liveMid) updateAxisLivePill(liveMid, 0);
+            clampHudInsideStage();
+            renderOverlayNow();
+          });
+        }
+      }
+    }).observe(chartEl);
+
+    function resetChartView() {
+      try {
+        chart.priceScale('right').applyOptions({ autoScale: true });
+        if (candleCount > 10) {
+          const visibleBars = isFullscreen ? 65 : 44;
+          chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, candleCount - visibleBars), to: candleCount + 6 });
+        } else {
+          chart.timeScale().fitContent();
+        }
+        requestAnimationFrame(() => {
+          if (liveMid) updateAxisLivePill(liveMid, 0);
+          renderOverlayNow();
+        });
+      } catch {}
+    }
+
+    function toggleFullscreen() {
+      isFullscreen = !isFullscreen;
+      document.getElementById('chartCard').classList.toggle('is-fullscreen', isFullscreen);
+      document.body.style.overflowY = isFullscreen ? 'hidden' : '';
+      document.getElementById('fsIconEnter').classList.toggle('hidden', isFullscreen);
+      document.getElementById('fsIconExit').classList.toggle('hidden', !isFullscreen);
+      setTimeout(() => {
+        chart.applyOptions({ width: chartEl.clientWidth, height: chartEl.clientHeight });
+        clampHudInsideStage();
+        resetChartView();
+      }, 60);
+    }
+
+    function redrawOrderLines() {
+      orderLines.forEach(l => { try { candleSeries.removePriceLine(l); } catch {} });
+      orderLines = [];
+      state.positions.forEach(p => {
+        orderLines.push(candleSeries.createPriceLine({
+          price: p.entry, color: p.side === 'BUY' ? '#10b981' : '#f43f5e',
+          lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true,
+          title: `${p.side} ${p.lot}`
+        }));
+        if (p.sl) orderLines.push(candleSeries.createPriceLine({
+          price: p.sl, color: '#fb7185', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'SL'
+        }));
+        if (p.tp) orderLines.push(candleSeries.createPriceLine({
+          price: p.tp, color: '#34d399', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'TP'
+        }));
+      });
+    }
+
+    // ==================== AI CARD + COMPACT HUD RENDERER ====================
+    function updateHudProgress(price) {
+      if (!activePlan || !price || activeSide === 'WAIT') return;
+      const sl = Number(activePlan.sl), tp = Number(activePlan.tp), entry = Number(activePlan.entry);
+      const total = Math.abs(tp - sl);
+      if (!total || isNaN(total)) return;
+      const pct = activeSide === 'BUY' ? ((price - sl) / total) * 100 : ((sl - price) / total) * 100;
+      const clamped = Math.max(4, Math.min(100, pct));
+
+      const bar = document.getElementById('hudProgBar');
+      const txt = document.getElementById('hudProgTxt');
+      if (bar) {
+        bar.style.width = `${clamped}%`;
+        bar.className = clamped >= 50 ? 'h-full bg-emerald-400 transition-all duration-200' : 'h-full bg-rose-400 transition-all duration-200';
+      }
+      if (txt) {
+        const diff = activeSide === 'BUY' ? (price - entry) : (entry - price);
+        txt.textContent = `${diff >= 0 ? '+' : ''}${diff.toFixed(2)}`;
+        txt.className = diff >= 0 ? 'text-emerald-400 tabular-nums' : 'text-rose-400 tabular-nums';
+      }
+    }
+
+    function renderBrainAndHud(msg) {
+      const brain = msg.brain || null;
+      const setup = msg.setup || null;
+      lastBrain = brain;
+      lastSetup = setup;
+
+      const card = document.getElementById('v8Card');
+      const iconBox = document.getElementById('v8IconBox');
+      const stEl = document.getElementById('v8StatusText');
+      const gradeEl = document.getElementById('v8GradeBadge');
+      const warEl = document.getElementById('v8WarBadge');
+      const mktEl = document.getElementById('v8MarketText');
+      const rsnEl = document.getElementById('v8ReasonText');
+
+      if (brain) {
+        const isBuy = brain.status === 'APPROVED_BUY';
+        const isSell = brain.status === 'APPROVED_SELL';
+        const isBlocked = brain.status === 'BLOCKED';
+
+        stEl.textContent = brain.action_km || 'កំពុងវិភាគ...';
+        const confTxt = brain.confidence_score ? ` • ${brain.confidence_score}%` : '';
+        gradeEl.textContent = `Grade ${brain.grade || 'WAIT'}${confTxt}`;
+
+        const wLevel = brain.war_news?.level;
+        if (wLevel === 'HIGH' || wLevel === 'MEDIUM') {
+          warEl.classList.remove('hidden');
+          warEl.textContent = `សង្គ្រាម: ${wLevel}`;
+        } else {
+          warEl.classList.add('hidden');
+        }
+
+        if (isBuy) {
+          card.className = 'glass rounded-2xl p-3 border-l-4 border-l-emerald-400 space-y-2';
+          iconBox.className = 'w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-400/30 flex items-center justify-center text-emerald-400 shrink-0 mt-0.5';
+          stEl.className = 'text-xs sm:text-sm font-black text-emerald-400 leading-snug mt-0.5';
+          gradeEl.className = 'text-[9.5px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 font-bold tabular-nums';
+        } else if (isSell) {
+          card.className = 'glass rounded-2xl p-3 border-l-4 border-l-rose-500 space-y-2';
+          iconBox.className = 'w-8 h-8 rounded-xl bg-rose-500/15 border border-rose-400/30 flex items-center justify-center text-rose-400 shrink-0 mt-0.5';
+          stEl.className = 'text-xs sm:text-sm font-black text-rose-400 leading-snug mt-0.5';
+          gradeEl.className = 'text-[9.5px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-400/30 font-bold tabular-nums';
+        } else if (isBlocked) {
+          card.className = 'glass rounded-2xl p-3 border-l-4 border-l-rose-500 space-y-2';
+          iconBox.className = 'w-8 h-8 rounded-xl bg-rose-500/15 border border-rose-400/30 flex items-center justify-center text-rose-400 shrink-0 mt-0.5';
+          stEl.className = 'text-xs sm:text-sm font-black text-rose-300 leading-snug mt-0.5';
+          gradeEl.className = 'text-[9.5px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-400/30 font-bold tabular-nums';
+        } else {
+          card.className = 'glass rounded-2xl p-3 border-l-4 border-l-amber-400 space-y-2';
+          iconBox.className = 'w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-400/30 flex items-center justify-center text-amber-300 shrink-0 mt-0.5';
+          stEl.className = 'text-xs sm:text-sm font-black text-amber-300 leading-snug mt-0.5';
+          gradeEl.className = 'text-[9.5px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/30 font-bold tabular-nums';
+        }
+
+        mktEl.textContent = brain.market_state?.summary_km || 'កំពុងតាមដានស្ថានភាពទីផ្សារ...';
+        const reasons = Array.isArray(brain.reasons) ? brain.reasons.slice(0, 2).join(' | ') : '';
+        rsnEl.textContent = reasons || 'កំពុងរង់ចាំលក្ខខណ្ឌច្បាស់លាស់។';
+      }
+
+      const hudDot = document.getElementById('hudDot');
+      const hudSide = document.getElementById('hudSide');
+      const hudGrade = document.getElementById('hudGrade');
+
+      const plan = brain?.plan || (setup ? {
+        entry: setup.entry, sl: setup.sl, tp: setup.tp1, tp2: setup.tp2,
+        sl_pips: Math.round(Math.abs(setup.entry - setup.sl) * 10),
+        tp_pips: Math.round(Math.abs(setup.tp1 - setup.entry) * 10),
+        tp2_pips: setup.tp2 ? Math.round(Math.abs(setup.tp2 - setup.entry) * 10) : null,
+        rr: setup.rr || '2 : 1', entry_state: 'IN_ZONE', entry_km: 'ចូលបាន'
+      } : null);
+
+      const side = (brain && brain.side && brain.side !== 'NONE')
+        ? brain.side
+        : (msg.active_signal?.side || (String(msg.signal || '').includes('BUY') ? 'BUY' : String(msg.signal || '').includes('SELL') ? 'SELL' : 'WAIT'));
+
+      activePlan = plan;
+      activeSide = side;
+
+      hudSide.textContent = side;
+      hudGrade.textContent = brain?.confidence_score
+        ? `${brain.grade || 'V8'} ${brain.confidence_score}%`
+        : `${msg.confidence || 50}%`;
+
+      if (side === 'BUY') {
+        demoHudEl.style.borderLeftColor = '#10b981';
+        hudDot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0';
+        hudSide.className = 'text-[11px] font-black tracking-wide text-emerald-400';
+      } else if (side === 'SELL') {
+        demoHudEl.style.borderLeftColor = '#f43f5e';
+        hudDot.className = 'w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0';
+        hudSide.className = 'text-[11px] font-black tracking-wide text-rose-400';
+      } else {
+        demoHudEl.style.borderLeftColor = '#facc15';
+        hudDot.className = 'w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0';
+        hudSide.className = 'text-[11px] font-black tracking-wide text-yellow-400';
+      }
+
+      if (plan && plan.entry) {
+        const slNum = Number(plan.sl).toFixed(2);
+        const tpNum = Number(plan.tp).toFixed(2);
+        document.getElementById('hudMiniSl').textContent = slNum;
+        document.getElementById('hudMiniTp').textContent = tpNum;
+        document.getElementById('hudEntry').textContent = `$${Number(plan.entry).toFixed(2)}`;
+        document.getElementById('hudSl').textContent = `$${slNum}`;
+        document.getElementById('hudTp').textContent = `$${tpNum}`;
+        document.getElementById('hudTp2').textContent = plan.tp2 ? `$${Number(plan.tp2).toFixed(2)}` : '--';
+        document.getElementById('hudSlPips').textContent = plan.sl_pips ? `(-${plan.sl_pips})` : '';
+        document.getElementById('hudTpPips').textContent = plan.tp_pips ? `(+${plan.tp_pips})` : '';
+        document.getElementById('hudTp2Pips').textContent = plan.tp2_pips ? `(+${plan.tp2_pips})` : '';
+        document.getElementById('hudRr').textContent = plan.rr || '2 : 1';
+
+        const stBadge = document.getElementById('hudEntryState');
+        stBadge.textContent = plan.entry_km || 'ចូលបាន';
+        stBadge.className = plan.entry_state === 'IN_ZONE'
+          ? 'text-[8px] px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold'
+          : plan.entry_state === 'PULLBACK'
+          ? 'text-[8px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold'
+          : 'text-[8px] px-1 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold';
+
+        if (liveMid > 0) updateHudProgress(liveMid);
+      }
+    }
+
+    // ==================== TRADING ENGINE ====================
+    function calcPositionPnl(p) {
+      if (!liveBid || !liveAsk) return 0;
+      const closePx = p.side === 'BUY' ? liveBid : liveAsk;
+      const diff = p.side === 'BUY' ? (closePx - p.entry) : (p.entry - closePx);
+      return (diff * p.lot * CONTRACT_OZ) - (p.comm || 0);
+    }
+
+    function placeOrder(side) {
+      if (!liveBid || !liveAsk) { showToast('កំពុងរង់ចាំតម្លៃផ្ទាល់...', 'loss'); return; }
+      const lot = Math.max(0.01, Math.min(10, parseFloat(document.getElementById('inpLot').value) || 0.01));
+      const sl = parseFloat(document.getElementById('inpSl').value) || null;
+      const tp = parseFloat(document.getElementById('inpTp').value) || null;
+      const entry = side === 'BUY' ? liveAsk : liveBid;
+
+      if (side === 'BUY') {
+        if (sl && sl >= entry) { showToast('SL សម្រាប់ BUY ត្រូវតែទាបជាងតម្លៃចូល!', 'loss'); return; }
+        if (tp && tp <= entry) { showToast('TP សម្រាប់ BUY ត្រូវតែខ្ពស់ជាងតម្លៃចូល!', 'loss'); return; }
+      } else {
+        if (sl && sl <= entry) { showToast('SL សម្រាប់ SELL ត្រូវតែខ្ពស់ជាងតម្លៃចូល!', 'loss'); return; }
+        if (tp && tp >= entry) { showToast('TP សម្រាប់ SELL ត្រូវតែទាបជាងតម្លៃចូល!', 'loss'); return; }
+      }
+
+      const reqMargin = (entry * lot * CONTRACT_OZ) / LEVERAGE;
+      if (reqMargin > getAccountMetrics().freeMargin) {
+        showToast(`Free Margin មិនគ្រប់គ្រាន់ទេ (ត្រូវការ $${reqMargin.toFixed(0)})`, 'loss');
+        return;
+      }
+
+      const comm = Math.round(lot * COMM_PER_LOT * 100) / 100;
+      state.positions.unshift({
+        id: Date.now(), side, lot, entry, sl, tp, comm,
+        openTime: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+      });
+      saveState();
+      redrawOrderLines();
+      renderTables();
+      updateAccountUI();
+      showToast(`បើក ${side} ${lot.toFixed(2)} Lot នៅ $${entry.toFixed(2)} រួចរាល់!`, 'info');
+    }
+
+    function closePosition(id, reason = 'Manual') {
+      const idx = state.positions.findIndex(p => p.id === id);
+      if (idx === -1) return;
+      const p = state.positions[idx];
+      const exitPx = p.side === 'BUY' ? liveBid : liveAsk;
+      const pnl = calcPositionPnl(p);
+
+      state.balance = Math.round((state.balance + pnl) * 100) / 100;
+      state.history.unshift({
+        id: p.id, side: p.side, lot: p.lot, entry: p.entry, exit: exitPx,
+        pnl: Math.round(pnl * 100) / 100, reason,
+        closeTime: new Date().toLocaleString('en-GB', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+      });
+      state.history = state.history.slice(0, 100);
+      state.positions.splice(idx, 1);
+      saveState();
+      redrawOrderLines();
+      renderTables();
+      updateAccountUI();
+      showToast(`បិទ ${p.side} (${reason}): ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`, pnl >= 0 ? 'win' : 'loss');
+    }
+
+    function closeAllPositions() {
+      state.positions.map(p => p.id).forEach(id => closePosition(id, 'Close All'));
+    }
+
+    function checkAutoSlTp() {
+      if (!state.positions.length || !liveBid || !liveAsk) return;
+      const toClose = [];
+      for (const p of state.positions) {
+        const px = p.side === 'BUY' ? liveBid : liveAsk;
+        if (p.side === 'BUY') {
+          if (p.sl && px <= p.sl) toClose.push([p.id, 'Hit SL']);
+          else if (p.tp && px >= p.tp) toClose.push([p.id, 'Hit TP']);
+        } else {
+          if (p.sl && px >= p.sl) toClose.push([p.id, 'Hit SL']);
+          else if (p.tp && px <= p.tp) toClose.push([p.id, 'Hit TP']);
+        }
+      }
+      toClose.forEach(([id, reason]) => closePosition(id, reason));
+    }
+
+    function getAccountMetrics() {
+      let floating = 0, usedMargin = 0;
+      for (const p of state.positions) {
+        floating += calcPositionPnl(p);
+        usedMargin += (p.entry * p.lot * CONTRACT_OZ) / LEVERAGE;
+      }
+      const equity = state.balance + floating;
+      const freeMargin = Math.max(0, equity - usedMargin);
+      return { floating, equity, usedMargin, freeMargin };
+    }
+
+    function updateAccountUI() {
+      const m = getAccountMetrics();
+      document.getElementById('accBalance').textContent = `$${state.balance.toFixed(2)}`;
+      document.getElementById('accEquity').textContent = `$${m.equity.toFixed(2)}`;
+      const flEl = document.getElementById('accFloating');
+      flEl.textContent = `${m.floating >= 0 ? '+' : ''}$${m.floating.toFixed(2)}`;
+      flEl.className = `text-lg sm:text-xl font-black tabular-nums ${m.floating > 0 ? 'text-emerald-400' : m.floating < 0 ? 'text-rose-400' : 'text-gray-300'}`;
+      document.getElementById('accFreeMargin').textContent = `$${m.freeMargin.toFixed(2)}`;
+
+      const tot = state.history.length;
+      const wins = state.history.filter(h => h.pnl > 0).length;
+      const net = state.history.reduce((s, h) => s + h.pnl, 0);
+      document.getElementById('accWinRate').textContent = `${tot ? Math.round(wins / tot * 100) : 0}%`;
+      const netEl = document.getElementById('accNetPnl');
+      netEl.textContent = `${net >= 0 ? '+' : ''}$${net.toFixed(2)}`;
+      netEl.className = `tabular-nums ${net >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+    }
+
+    function renderTables() {
+      document.getElementById('openCount').textContent = state.positions.length;
+      document.getElementById('histCount').textContent = state.history.length;
+      document.getElementById('btnCloseAll').classList.toggle('hidden', state.positions.length === 0);
+
+      const mOpen = document.getElementById('openCardsMobile');
+      const dOpen = document.getElementById('openBodyDesktop');
+
+      if (!state.positions.length) {
+        mOpen.innerHTML = '<div class="py-6 text-center text-xs text-gray-500">មិនទាន់មាន Order កំពុងបើកទេ។</div>';
+        dOpen.innerHTML = '<tr><td colspan="7" class="py-6 text-center text-gray-500">មិនទាន់មាន Order កំពុងបើកទេ។</td></tr>';
+      } else {
+        mOpen.innerHTML = state.positions.map(p => {
+          const px = p.side === 'BUY' ? liveBid : liveAsk;
+          const pnl = calcPositionPnl(p);
+          const sideCls = p.side === 'BUY' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border-rose-500/30';
+          return `
+            <div class="rounded-xl bg-black/35 border border-white/10 p-3 space-y-2">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <span class="px-2 py-0.5 rounded-md font-black text-[10px] border ${sideCls}">${escHtml(p.side)}</span>
+                  <span class="text-xs font-black text-white tabular-nums">${p.lot.toFixed(2)} Lot</span>
+                  <span class="text-[10px] text-gray-500">${escHtml(p.openTime || '')}</span>
+                </div>
+                <div id="m-pnl-${p.id}" class="text-sm font-black tabular-nums ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
+                  ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}
+                </div>
+              </div>
+              <div class="flex items-center justify-between gap-2 text-[11px]">
+                <div class="space-y-0.5">
+                  <div class="text-gray-300 tabular-nums">
+                    $${p.entry.toFixed(2)} <span class="text-gray-500">→</span> <span id="m-px-${p.id}" class="font-bold text-white">${px ? '$' + px.toFixed(2) : '--'}</span>
+                  </div>
+                  <div class="text-[10px] text-gray-400 tabular-nums">
+                    SL: <span class="text-rose-400">${p.sl ? '$' + p.sl.toFixed(2) : '--'}</span> • TP: <span class="text-emerald-400">${p.tp ? '$' + p.tp.toFixed(2) : '--'}</span>
+                  </div>
+                </div>
+                <button onclick="closePosition(${p.id})" class="px-3.5 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-white border border-rose-500/35 text-xs font-bold active:scale-95 transition shrink-0">
+                  បិទ Order
+                </button>
+              </div>
+            </div>`;
+        }).join('');
+
+        dOpen.innerHTML = state.positions.map(p => {
+          const px = p.side === 'BUY' ? liveBid : liveAsk;
+          const pnl = calcPositionPnl(p);
+          return `
+            <tr class="hover:bg-white/5">
+              <td class="py-2.5"><span class="px-2 py-0.5 rounded font-black text-[10px] ${p.side === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}">${escHtml(p.side)}</span></td>
+              <td class="py-2.5 font-bold tabular-nums">${p.lot.toFixed(2)}</td>
+              <td class="py-2.5 tabular-nums">$${p.entry.toFixed(2)}</td>
+              <td id="d-px-${p.id}" class="py-2.5 tabular-nums text-gray-300">${px ? '$' + px.toFixed(2) : '--'}</td>
+              <td class="py-2.5 tabular-nums text-[11px]"><span class="text-rose-400">${p.sl ? '$' + p.sl.toFixed(2) : '--'}</span> / <span class="text-emerald-400">${p.tp ? '$' + p.tp.toFixed(2) : '--'}</span></td>
+              <td id="d-pnl-${p.id}" class="py-2.5 text-right font-black tabular-nums ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</td>
+              <td class="py-2.5 text-right"><button onclick="closePosition(${p.id})" class="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-rose-500 text-white text-[10px] font-bold transition">បិទ</button></td>
+            </tr>`;
+        }).join('');
+      }
+
+      const mHist = document.getElementById('histCardsMobile');
+      const dHist = document.getElementById('histBodyDesktop');
+
+      if (!state.history.length) {
+        mHist.innerHTML = '<div class="py-6 text-center text-xs text-gray-500">មិនទាន់មានប្រវត្តិជួញដូរទេ។</div>';
+        dHist.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-gray-500">មិនទាន់មានប្រវត្តិជួញដូរទេ។</td></tr>';
+      } else {
+        mHist.innerHTML = state.history.map(h => `
+          <div class="rounded-xl bg-black/30 border border-white/5 p-3 flex items-center justify-between gap-2">
+            <div class="space-y-0.5 min-w-0">
+              <div class="flex items-center gap-1.5">
+                <span class="px-1.5 py-0.5 rounded font-bold text-[10px] ${h.side === 'BUY' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'}">${escHtml(h.side)}</span>
+                <span class="text-xs font-bold text-white tabular-nums">${h.lot.toFixed(2)} Lot</span>
+                <span class="text-[10px] text-gray-500">${escHtml(h.reason)}</span>
+              </div>
+              <div class="text-[11px] text-gray-400 tabular-nums">$${h.entry.toFixed(2)} → $${h.exit.toFixed(2)} • ${escHtml(h.closeTime)}</div>
+            </div>
+            <div class="text-sm font-black tabular-nums shrink-0 ${h.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
+              ${h.pnl >= 0 ? '+' : ''}$${h.pnl.toFixed(2)}
+            </div>
+          </div>`).join('');
+
+        dHist.innerHTML = state.history.map(h => `
+          <tr>
+            <td class="py-2 text-gray-400 text-[11px]">${escHtml(h.closeTime)}</td>
+            <td class="py-2"><span class="px-1.5 py-0.5 rounded font-bold text-[10px] ${h.side === 'BUY' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'}">${escHtml(h.side)}</span></td>
+            <td class="py-2 tabular-nums">${h.lot.toFixed(2)}</td>
+            <td class="py-2 tabular-nums text-[11px]">$${h.entry.toFixed(2)} → $${h.exit.toFixed(2)}</td>
+            <td class="py-2 text-[11px] text-gray-400">${escHtml(h.reason)}</td>
+            <td class="py-2 text-right font-black tabular-nums ${h.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${h.pnl >= 0 ? '+' : ''}$${h.pnl.toFixed(2)}</td>
+          </tr>`).join('');
+      }
+    }
+
+    function updatePositionsLiveUI() {
+      for (const p of state.positions) {
+        const px = p.side === 'BUY' ? liveBid : liveAsk;
+        const pnl = calcPositionPnl(p);
+        const pxText = px ? `$${px.toFixed(2)}` : '--';
+        const pnlText = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+        const colorCls = pnl >= 0 ? 'text-emerald-400' : 'text-rose-400';
+
+        const mPx = document.getElementById(`m-px-${p.id}`);
+        const mPnl = document.getElementById(`m-pnl-${p.id}`);
+        if (mPx) mPx.textContent = pxText;
+        if (mPnl) { mPnl.textContent = pnlText; mPnl.className = `text-sm font-black tabular-nums ${colorCls}`; }
+
+        const dPx = document.getElementById(`d-px-${p.id}`);
+        const dPnl = document.getElementById(`d-pnl-${p.id}`);
+        if (dPx) dPx.textContent = pxText;
+        if (dPnl) { dPnl.textContent = pnlText; dPnl.className = `py-2.5 text-right font-black tabular-nums ${colorCls}`; }
+      }
+    }
+
+    // ==================== HELPERS ====================
+    function setLot(v) { document.getElementById('inpLot').value = v.toFixed(2); updateLotInfo(); }
+    function stepLot(delta) {
+      const cur = parseFloat(document.getElementById('inpLot').value) || 0.01;
+      setLot(Math.max(0.01, Math.min(10, Math.round((cur + delta) * 100) / 100)));
+    }
+    function updateLotInfo() {
+      const lot = parseFloat(document.getElementById('inpLot').value) || 0.01;
+      document.getElementById('lotPipVal').textContent = `$${(lot * 100).toFixed(2)} / $1 move`;
+    }
+    function clearSlTp() {
+      document.getElementById('inpSl').value = '';
+      document.getElementById('inpTp').value = '';
+    }
+    function quickSlTp(slDist, tpDist) {
+      if (!liveMid) return;
+      const side = (activeSide === 'SELL') ? 'SELL' : 'BUY';
+      document.getElementById('inpSl').value = (side === 'BUY' ? liveMid - slDist : liveMid + slDist).toFixed(2);
+      document.getElementById('inpTp').value = (side === 'BUY' ? liveMid + tpDist : liveMid - tpDist).toFixed(2);
+    }
+    function fillFromAI() {
+      if (activePlan && activePlan.sl && activePlan.tp) {
+        document.getElementById('inpSl').value = Number(activePlan.sl).toFixed(2);
+        document.getElementById('inpTp').value = Number(activePlan.tp).toFixed(2);
+        const warn = activePlan.entry_state === 'EXTENDED' ? ' (ប្រយ័ត្ន៖ តម្លៃរត់ឆ្ងាយពី EMA20)' : '';
+        showToast(`បានដាក់ SL/TP តាម AI (${activeSide})${warn}`, 'info');
+      } else {
+        showToast('មិនទាន់មានផែនការ SL/TP ពី AI ទេ', 'loss');
+      }
+    }
+    function switchTab(t) {
+      document.getElementById('tabOpen').classList.toggle('active', t === 'open');
+      document.getElementById('tabHistory').classList.toggle('active', t === 'history');
+      document.getElementById('panelOpen').classList.toggle('hidden', t !== 'open');
+      document.getElementById('panelHistory').classList.toggle('hidden', t !== 'history');
+    }
+    function openResetModal() { document.getElementById('resetModal').classList.remove('hidden'); }
+    function resetAccount(amount) {
+      state = { initialBalance: amount, balance: amount, positions: [], history: [] };
+      saveState(); redrawOrderLines(); renderTables(); updateAccountUI();
+      document.getElementById('resetModal').classList.add('hidden');
+      showToast(`បាន Reset គណនី Demo ទៅ $${amount.toLocaleString()} រួចរាល់!`, 'info');
+    }
+
+    // ==================== HYBRID TURBO WEBSOCKET ENGINE ====================
+    function flushTick() {
+      tickRaf = null;
+      const t = pendingTick;
+      if (!t) return;
+      pendingTick = null;
+
+      const dir = lastLiveMid ? (t.price > lastLiveMid ? 1 : t.price < lastLiveMid ? -1 : 0) : 0;
+      lastLiveMid = t.price;
+      liveMid = t.price;
+      liveSpread = t.spread || liveSpread;
+      liveBid = t.bid || (liveMid - liveSpread / 2);
+      liveAsk = t.ask || (liveMid + liveSpread / 2);
+
+      domLivePrice.textContent = `$${liveMid.toFixed(2)}`;
+      if (dir !== 0) {
+        domLivePrice.style.color = dir > 0 ? '#00e5a8' : '#ff5c7c';
+        clearTimeout(tickFlashTimer);
+        tickFlashTimer = setTimeout(() => { domLivePrice.style.color = '#f9fafb'; }, 130);
+      }
+      domSpreadTop.textContent = `Spread: $${liveSpread.toFixed(2)}`;
+      domBtnSell.textContent = liveBid.toFixed(2);
+      domBtnBuy.textContent = liveAsk.toFixed(2);
+
+      if (lastCandle) {
+        const sec = TF_SEC[currentTf] || 900;
+        const bt = Math.floor(Date.now() / 1000 / sec) * sec;
+        if (bt > lastCandle.time) {
+          lastCandle = { time: bt, open: liveMid, high: liveMid, low: liveMid, close: liveMid };
+          candleCount++;
+        } else {
+          lastCandle = { ...lastCandle, close: liveMid, high: Math.max(lastCandle.high, liveMid), low: Math.min(lastCandle.low, liveMid) };
+        }
+        try { candleSeries.update(lastCandle); } catch {}
+        const now = performance.now();
+        if (now - lastOverlayTickTs > 240) {
+          lastOverlayTickTs = now;
+          scheduleOverlay();
+        }
+      }
+
+      updateAxisLivePill(liveMid, dir);
+      checkAutoSlTp();
+      updateAccountUI();
+      updateHudProgress(liveMid);
+      if (state.positions.length) updatePositionsLiveUI();
+    }
+
+    function onPriceTick(price, bid, ask, spread) {
+      pendingTick = { price, bid, ask, spread };
+      if (!tickRaf) tickRaf = requestAnimationFrame(flushTick);
+    }
+
+    setInterval(() => {
+      const tfSec = TF_SEC[currentTf] || 900;
+      const rem = tfSec - (Math.floor(Date.now() / 1000) % tfSec);
+      const h = Math.floor(rem / 3600), m = Math.floor((rem % 3600) / 60), s = rem % 60;
+      domPillTimer.textContent = h > 0
+        ? `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+        : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    }, 1000);
+
+    function stopDirectStream() {
+      if (directRetryTimer) { clearTimeout(directRetryTimer); directRetryTimer = null; }
+      if (directWs) { directWs.onclose = null; directWs.onerror = null; directWs.close(); directWs = null; }
+    }
+
+    function emitCalibrated(rawPrice) {
+      if (!rawPrice || isNaN(rawPrice)) return;
+      lastRawCrypto = rawPrice;
+      const cal = Math.round((rawPrice + forexOffset) * 100) / 100;
+      onPriceTick(cal, Math.round((cal - liveSpread / 2) * 100) / 100, Math.round((cal + liveSpread / 2) * 100) / 100, liveSpread);
+    }
+
+    function startDirectStream(sourceType) {
+      const target = sourceType === 'XAUT' ? 'XAUT' : 'PAXG';
+      if (directWs && directSourceType === target) return;
+      stopDirectStream();
+      directSourceType = target;
+      if (document.hidden || !navigator.onLine) return;
+
+      try {
+        if (target === 'PAXG') {
+          directWs = new WebSocket('wss://data-stream.binance.vision/stream?streams=paxgusdt@aggTrade/paxgusdt@bookTicker');
+          directWs.onmessage = (e) => {
+            try {
+              const d = JSON.parse(e.data).data;
+              if (d?.e === 'aggTrade') {
+                const p = parseFloat(d.p);
+                if (p > 0) emitCalibrated(p);
+              } else if (d?.b && d?.a) {
+                const bid = parseFloat(d.b), ask = parseFloat(d.a);
+                if (bid > 0 && ask > 0) emitCalibrated((bid + ask) / 2);
+              }
+            } catch {}
+          };
+        } else {
+          directWs = new WebSocket('wss://ws.okx.com:8443/ws/v5/public');
+          directWs.onopen = () => {
+            try { directWs.send(JSON.stringify({ op: 'subscribe', args: [{ channel: 'tickers', instId: 'XAUT-USDT' }] })); } catch {}
+          };
+          directWs.onmessage = (e) => {
+            try {
+              const last = parseFloat(JSON.parse(e.data).data?.[0]?.last);
+              if (last > 0) emitCalibrated(last);
+            } catch {}
+          };
+        }
+        if (directWs) {
+          directWs.onclose = () => {
+            directWs = null;
+            if (!document.hidden && navigator.onLine && directSourceType) {
+              directRetryTimer = setTimeout(() => startDirectStream(directSourceType), 1200);
+            }
+          };
+          directWs.onerror = () => { stopDirectStream(); };
+        }
+      } catch {}
+    }
+
+    function connectWs() {
+      if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null; }
+      if (ws) { ws.onclose = null; ws.onerror = null; ws.close(); ws = null; }
+      if (document.hidden || !navigator.onLine) return;
+
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/ws/gold/${currentTf}`);
+      ws.onopen = () => {
+        document.getElementById('wsDot').className = 'relative inline-flex rounded-full h-2 w-2 bg-emerald-500';
+      };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'ping') return;
+          if (msg.type === 'full' && Array.isArray(msg.candles)) {
+            if (typeof msg.basis_offset === 'number') forexOffset = msg.basis_offset;
+            if (msg.spread) liveSpread = msg.spread;
+
+            candleCount = msg.candles.length;
+            candleSeries.setData(msg.candles);
+            if (Array.isArray(msg.ema20_line)) ema20Series.setData(msg.ema20_line);
+            if (Array.isArray(msg.ema50_line)) ema50Series.setData(msg.ema50_line);
+
+            lastCandle = { ...msg.candles[candleCount - 1] };
+            lastChartSignals = msg.chart_signals || [];
+            lastSmc = msg.smc || null;
+
+            renderBrainAndHud(msg);
+            onPriceTick(msg.price, msg.bid, msg.ask, msg.spread);
+            redrawOrderLines();
+            startDirectStream(msg.raw_feed === 'XAUT' ? 'XAUT' : 'PAXG');
+
+            if (isFirstLoad) { resetChartView(); isFirstLoad = false; }
+            else scheduleOverlay();
+          } else if (msg.type === 'tick' && msg.price > 0) {
+            if (msg.is_forex && lastRawCrypto > 0) {
+              const off = msg.price - lastRawCrypto;
+              if (Math.abs(off) < 120) forexOffset = off;
+            }
+            onPriceTick(msg.price, msg.bid, msg.ask, msg.spread);
+          }
+        } catch {}
+      };
+      ws.onclose = () => {
+        document.getElementById('wsDot').className = 'relative inline-flex rounded-full h-2 w-2 bg-yellow-500';
+        if (!document.hidden && navigator.onLine) wsRetryTimer = setTimeout(connectWs, 2500);
+      };
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopDirectStream();
+        if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null; }
+      } else {
+        connectWs();
+        if (directSourceType) startDirectStream(directSourceType);
+      }
+    });
+
+    function switchTf(tf) {
+      currentTf = tf;
+      isFirstLoad = true;
+      prefs.tf = tf;
+      savePrefs();
+      document.querySelectorAll('.tf-btn').forEach(b => b.classList.toggle('active', b.dataset.tf === tf));
+      connectWs();
+    }
+
+    // Init
+    demoHudEl.classList.toggle('hidden', !prefs.showHud);
+    document.getElementById('btnHudToggle').textContent = `HUD: ${prefs.showHud ? 'ON' : 'OFF'}`;
+    document.getElementById('btnSmcToggle').textContent = `SMC: ${prefs.showSmc ? 'ON' : 'OFF'}`;
+    applyHudCollapseState();
+    updateLotInfo();
+    renderTables();
+    updateAccountUI();
+    switchTf(currentTf);
+  </script>
+</body>
+</html>

@@ -5,3 +5,7 @@ pandas
 numpy
 requests
 cachetools
+joblib
+scikit-learn
+lightgbm
+catboost

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#070b13" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>TRI PISAL • Gold XAU/USD Pro Terminal</title>
+  <title>TRI PISAL • Gold XAU/USD Pro Terminal (V8 SMC AI)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
@@ -61,10 +61,21 @@
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-    /* អនុញ្ញាតឲ្យអូសឡើងចុះបានរលូនលើទូរស័ព្ទទោះប៉ះលើក្រាហ្វិក */
     #chartStage { touch-action: pan-y; }
 
-    /* Fullscreen Mode (បញ្ឈរ និងផ្តេកលើ iPhone / Android / PC) */
+    /* Draggable V8 HUD */
+    #chartHud {
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      cursor: grab;
+    }
+    #chartHud.is-dragging {
+      cursor: grabbing;
+      opacity: 0.92;
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.85);
+    }
+
     #chartCard.is-fullscreen {
       position: fixed;
       inset: 0;
@@ -81,7 +92,6 @@
     #chartCard.is-fullscreen #chartStage { flex: 1; height: 100%; touch-action: none; }
     #chartCard.is-fullscreen #chart { height: 100% !important; }
 
-    /* GPU-Accelerated Live Price + Countdown Pill (0 Lag) */
     #axisLivePill {
       position: absolute;
       top: 0;
@@ -106,11 +116,10 @@
     គ្មានការភ្ជាប់អ៊ីនធឺណិត — កំពុងបង្ហាញទិន្នន័យចុងក្រោយពីអង្គចងចាំទូរស័ព្ទ
   </div>
 
-  <!-- Sticky Enterprise Header with TRI PISAL Logo -->
-  <header class="sticky top-0 z-30 glass border-b border-white/10 px-3 sm:px-4 py-2.5">
+  <!-- Sticky Enterprise Header with TRI PISAL Logo & DEMO Shortcut -->
+  <header class="sticky top-0 z-30 glass border-b border-white/10 px-3 sm:px-4 py-2">
     <div class="max-w-5xl mx-auto flex items-center justify-between gap-2">
-      <div class="flex items-center gap-2.5 min-w-0">
-        <!-- TRI PISAL Emblem -->
+      <div class="flex items-center gap-2 min-w-0">
         <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-yellow-300 via-amber-500 to-yellow-700 p-[1.5px] shadow-lg shadow-yellow-500/20 shrink-0">
           <div class="w-full h-full rounded-[10px] bg-[#090e1a] flex items-center justify-center">
             <svg viewBox="0 0 40 40" class="w-6 h-6 sm:w-7 sm:h-7" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -129,26 +138,29 @@
 
         <div class="min-w-0">
           <div class="flex items-center gap-1.5">
-            <span class="text-xs sm:text-sm font-black tracking-wider brand-text truncate">TRI PISAL</span>
+            <span class="text-xs sm:text-sm font-black tracking-wide brand-text whitespace-nowrap">TRI PISAL</span>
             <span class="relative flex h-2 w-2 shrink-0">
               <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span id="wsDot" class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
             </span>
-            <span id="wsStatus" class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-bold border border-emerald-500/20 shrink-0">TURBO</span>
-            <span id="feedBadge" class="hidden sm:inline-block text-[9px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 font-semibold border border-sky-500/20 shrink-0">FOREX</span>
+            <span id="wsStatus" class="hidden sm:inline-block text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-bold border border-emerald-500/20 shrink-0">TURBO</span>
+            <span id="feedBadge" class="hidden md:inline-block text-[9px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 font-semibold border border-sky-500/20 shrink-0">FOREX</span>
+            <a href="/demo" class="text-[9px] sm:text-[10px] px-2 py-0.5 rounded-lg bg-yellow-400 hover:bg-yellow-300 text-[#070b13] font-black transition shrink-0 whitespace-nowrap">
+              DEMO
+            </a>
           </div>
           <div class="flex items-center gap-1 mt-0.5 text-[10px] sm:text-[11px] text-gray-400 truncate">
             <span class="text-yellow-400/90 font-bold">XAU/USD</span>
             <span>•</span>
-            <span id="dataSource" class="truncate">កំពុងភ្ជាប់ Turbo Real-time...</span>
+            <span id="dataSource" class="truncate">កំពុងភ្ជាប់ Turbo...</span>
           </div>
         </div>
       </div>
 
-      <div class="text-right shrink-0 min-w-[118px]">
-        <div id="livePrice" class="text-lg sm:text-2xl font-black tracking-tight tabular-nums text-white transition-colors duration-75">----.--</div>
-        <div id="priceChange" class="text-[11px] sm:text-xs font-semibold tabular-nums text-gray-400">--</div>
-        <div id="bidAskText" class="text-[9.5px] sm:text-[10px] text-gray-400 tabular-nums mt-0.5">Bid -- • Ask --</div>
+      <div class="text-right shrink-0 min-w-[108px]">
+        <div id="livePrice" class="text-lg sm:text-2xl font-black tracking-tight tabular-nums text-white transition-colors duration-75 leading-tight">----.--</div>
+        <div id="priceChange" class="text-[10.5px] sm:text-xs font-semibold tabular-nums text-gray-400">--</div>
+        <div id="bidAskText" class="text-[9px] sm:text-[10px] text-gray-400 tabular-nums">Bid -- • Ask --</div>
       </div>
     </div>
   </header>
@@ -167,7 +179,7 @@
     </button>
   </div>
 
-  <!-- Main Workspace (No overflow-x-hidden so mobile vertical scroll stays native & silky) -->
+  <!-- Main Workspace -->
   <main class="flex-1 max-w-5xl w-full mx-auto px-3 sm:px-4 py-3 space-y-3">
 
     <!-- USD High-Impact Economic News Bar -->
@@ -197,11 +209,11 @@
         </label>
         <label class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#0f172a] border border-white/10 text-[11px] text-gray-200 cursor-pointer select-none">
           <input id="chkZones" type="checkbox" checked onchange="toggleZones(this.checked)" class="accent-blue-400 w-3.5 h-3.5 rounded cursor-pointer" />
-          <span>Zone</span>
+          <span>SMC/Zone</span>
         </label>
         <label class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#0f172a] border border-white/10 text-[11px] text-gray-200 cursor-pointer select-none">
           <input id="chkSlTp" type="checkbox" checked onchange="toggleSlTpLines(this.checked)" class="accent-sky-400 w-3.5 h-3.5 rounded cursor-pointer" />
-          <span>SL/TP</span>
+          <span>V8 HUD</span>
         </label>
         <label class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-[#0f172a] border border-yellow-500/30 text-[11px] text-yellow-200 font-semibold cursor-pointer select-none">
           <input id="chkAI" type="checkbox" onchange="toggleAISection(this.checked)" class="accent-yellow-400 w-3.5 h-3.5 rounded cursor-pointer" />
@@ -210,7 +222,7 @@
       </div>
     </div>
 
-    <!-- PRO CHART CARD (FULLSCREEN PORTRAIT & LANDSCAPE) -->
+    <!-- PRO CHART CARD -->
     <div id="chartCard" class="relative glass rounded-2xl overflow-hidden shadow-2xl">
       <div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-white/10 bg-[#0b1120]/90 text-[11px] text-gray-400">
         <div class="flex items-center gap-2.5 flex-wrap">
@@ -251,16 +263,31 @@
         </div>
       </div>
 
+      <!-- 3-Slot Interactive TP/SL Tracker Bar -->
+      <div class="flex items-center justify-between gap-1.5 px-3 py-1.5 border-b border-white/10 bg-[#080d18]/95 overflow-x-auto no-scrollbar">
+        <div class="flex items-center gap-1.5 shrink-0">
+          <span class="text-[10px] font-bold text-gray-400 flex items-center gap-1 mr-0.5">
+            <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400"></i>
+            <span class="hidden sm:inline">តាមដាន TP/SL:</span>
+          </span>
+          <div id="tpSlSlotBar" class="flex items-center gap-1.5"></div>
+        </div>
+        <button onclick="openTpSlModal(-1)" class="shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold active:scale-95 transition">
+          <i data-lucide="plus" class="w-3 h-3"></i>
+          <span>បន្ថែម TP/SL</span>
+        </button>
+      </div>
+
       <!-- Chart Stage -->
       <div id="chartStage" class="relative w-full overflow-hidden">
-        <div id="chart" class="w-full h-[400px] sm:h-[480px]"></div>
+        <div id="chart" class="w-full h-[410px] sm:h-[490px]"></div>
 
         <!-- Watermark TRI PISAL -->
         <div class="pointer-events-none select-none absolute inset-0 flex items-center justify-center pr-16 opacity-[0.045]">
           <span class="text-3xl sm:text-5xl font-black tracking-[0.25em] text-yellow-300">TRI PISAL</span>
         </div>
 
-        <!-- Canvas Pro Overlay (BUY/SELL Boxes, CHoCH, TP1, SL, Demand/Supply Zone) -->
+        <!-- Canvas Pro Overlay (SMC OB/FVG, Weak High/Strong Low, BOS/CHoCH, BUY/SELL, 3-Slot TP/SL) -->
         <canvas id="signalCanvas" class="pointer-events-none absolute inset-0 z-10"></canvas>
 
         <!-- GPU Live Price + Countdown Pill -->
@@ -269,27 +296,77 @@
           <div id="pillTimer" class="text-[9.5px] font-bold tabular-nums opacity-95">--:--</div>
         </div>
 
-        <!-- HUD Status / Entry / Stop Loss / Take Profit / R:R -->
-        <div id="chartHud" class="pointer-events-none absolute top-2.5 right-[78px] sm:right-[84px] z-10 w-[134px] sm:w-[154px] rounded-xl bg-[#0b1220]/84 backdrop-blur-md border border-white/15 px-2.5 py-2 shadow-xl text-[10px] sm:text-[11px] space-y-1">
-          <div class="flex items-center justify-between border-b border-white/10 pb-1">
-            <span class="text-gray-400 font-semibold">Status</span>
-            <span id="hudSide" class="font-black text-yellow-400">--</span>
+        <!-- COMPACT DRAGGABLE & COLLAPSIBLE V8 HUD (អាចចាប់អូស និងចុចបង្រួម/ពង្រីកបាន) -->
+        <div id="chartHud" style="top: 8px; left: 8px;" class="absolute z-20 rounded-xl bg-[#070d19]/92 backdrop-blur-md border border-white/15 border-l-[3px] border-l-yellow-400 px-2.5 py-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.75)] text-[10px] transition-[width] duration-150">
+          <!-- Top Bar (Drag Handle + Collapse Toggle) -->
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-1.5 min-w-0">
+              <i data-lucide="grip-vertical" class="w-3 h-3 text-gray-500 shrink-0"></i>
+              <span id="hudDot" class="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0"></span>
+              <span id="hudSide" class="text-[11px] font-black tracking-wide text-yellow-400">WAIT</span>
+              <span id="hudGrade" class="text-[8.5px] px-1 py-0.5 rounded bg-white/10 text-gray-200 font-extrabold tabular-nums">V8</span>
+            </div>
+            <button id="hudToggleBtn" type="button" onclick="toggleHudCollapse(event)" title="បង្រួម / ពង្រីក"
+              class="w-5 h-5 rounded-md bg-white/10 hover:bg-white/20 text-gray-200 flex items-center justify-center shrink-0 transition">
+              <i id="hudChevron" data-lucide="chevron-down" class="w-3 h-3"></i>
+            </button>
           </div>
-          <div class="flex items-center justify-between">
-            <span class="text-gray-400">Entry</span>
-            <span id="hudEntry" class="font-bold text-white tabular-nums">--</span>
+
+          <!-- Compact 1-Line Summary (បង្ហាញពេលបង្រួម ដើម្បីកុំឲ្យបាំងទៀន) -->
+          <div id="hudMiniRow" class="flex items-center gap-2 mt-1 pt-1 border-t border-white/10 text-[9.5px] tabular-nums whitespace-nowrap">
+            <span class="text-rose-400 font-bold">SL <span id="hudMiniSl">--</span></span>
+            <span class="text-gray-600">•</span>
+            <span class="text-emerald-400 font-bold">TP <span id="hudMiniTp">--</span></span>
           </div>
-          <div class="flex items-center justify-between">
-            <span class="text-gray-400">Stop Loss</span>
-            <span id="hudSl" class="font-bold text-rose-400 tabular-nums">--</span>
-          </div>
-          <div class="flex items-center justify-between">
-            <span class="text-gray-400">Take Profit</span>
-            <span id="hudTp" class="font-bold text-emerald-400 tabular-nums">--</span>
-          </div>
-          <div class="flex items-center justify-between pt-0.5 border-t border-white/10">
-            <span class="text-gray-400">R : R</span>
-            <span id="hudRr" class="font-bold text-sky-300 tabular-nums">--</span>
+
+          <!-- Expanded Details (តូចស្អាត មិនវែងពេក) -->
+          <div id="hudBody" class="hidden mt-1.5 pt-1.5 border-t border-white/10 space-y-1 w-[158px] sm:w-[178px]">
+            <div class="flex items-center justify-between gap-1">
+              <span class="text-gray-400">Entry</span>
+              <div class="flex items-center gap-1">
+                <span id="hudEntry" class="font-black text-white tabular-nums">--</span>
+                <span id="hudEntryState" class="text-[8px] px-1 py-0.5 rounded bg-white/10 text-gray-300 font-bold">--</span>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between gap-1">
+              <span class="text-gray-400">Stop Loss</span>
+              <span class="tabular-nums">
+                <b id="hudSl" class="text-rose-400">--</b>
+                <span id="hudSlPips" class="text-[8.5px] text-rose-300/80 ml-0.5"></span>
+              </span>
+            </div>
+
+            <div class="flex items-center justify-between gap-1">
+              <span class="text-gray-400">TP 1</span>
+              <span class="tabular-nums">
+                <b id="hudTp" class="text-emerald-400">--</b>
+                <span id="hudTpPips" class="text-[8.5px] text-emerald-300/80 ml-0.5"></span>
+              </span>
+            </div>
+
+            <div class="flex items-center justify-between gap-1">
+              <span class="text-gray-400">TP 2</span>
+              <span class="tabular-nums">
+                <b id="hudTp2" class="text-emerald-300/90">--</b>
+                <span id="hudTp2Pips" class="text-[8.5px] text-emerald-300/70 ml-0.5"></span>
+              </span>
+            </div>
+
+            <div class="pt-1 border-t border-white/10 space-y-1">
+              <div class="flex items-center justify-between text-[9px]">
+                <span class="text-gray-400">R : R</span>
+                <span id="hudRr" class="font-black text-sky-300 tabular-nums">--</span>
+              </div>
+              <div class="w-full h-1 rounded-full bg-white/10 overflow-hidden">
+                <div id="hudProgBar" class="h-full bg-sky-400 transition-all duration-200" style="width: 50%"></div>
+              </div>
+              <div class="flex items-center justify-between text-[8px] text-gray-500 font-bold">
+                <span>SL</span>
+                <span id="hudProgTxt" class="text-gray-300 tabular-nums">Live</span>
+                <span>TP1</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -485,7 +562,7 @@
       </div>
     </div>
 
-    <!-- EMBEDDED AI SECTION (បើក-បិទតាម Checkbox នៅខាងលើ) -->
+    <!-- EMBEDDED AI CHAT SECTION -->
     <section id="aiSection" class="hidden glass rounded-2xl border border-yellow-500/25 overflow-hidden">
       <div class="bg-gradient-to-r from-yellow-500/15 via-slate-900/60 to-transparent px-4 py-3 border-b border-white/10 flex items-center justify-between">
         <div class="flex items-center gap-2.5">
@@ -493,8 +570,8 @@
             <i data-lucide="cpu" class="w-4 h-4"></i>
           </div>
           <div>
-            <h3 class="text-sm font-bold text-white leading-tight">TRI PISAL • Gold Quant AI</h3>
-            <p class="text-[10px] text-emerald-400 font-medium">វិភាគ MTF • USD News • Institutional • មិនបាំងក្រាហ្វិក</p>
+            <h3 class="text-sm font-bold text-white leading-tight">TRI PISAL • Gold Quant AI (V8)</h3>
+            <p class="text-[10px] text-emerald-400 font-medium">ខួរក្បាល V8 • ព័ត៌មានសង្គ្រាម &amp; មាសពិភពលោក • MTF</p>
           </div>
         </div>
         <div class="flex items-center gap-1.5">
@@ -514,7 +591,7 @@
           <div class="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-yellow-500/10">
             <span class="text-[11px] font-bold text-yellow-400 flex items-center gap-1.5">
               <i data-lucide="list-checks" class="w-3.5 h-3.5"></i>
-              <span>ជ្រើសរើសសំណួរដែលមានក្នុងប្រព័ន្ធ (១០ មុខ)</span>
+              <span>ជ្រើសរើសសំណួរដែលមានក្នុងប្រព័ន្ធ (១១ មុខ)</span>
             </span>
             <button type="button" onclick="hideQuestionDropdown()" class="text-gray-400 hover:text-white p-0.5">
               <i data-lucide="chevron-down" class="w-3.5 h-3.5"></i>
@@ -544,12 +621,197 @@
       </div>
     </section>
 
+    <!-- Global Gold & Macro News + War/Geopolitical Radar -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+      <section class="glass p-3.5 rounded-2xl">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <h2 class="flex items-center gap-1.5 text-xs font-bold text-white uppercase tracking-wider">
+            <i data-lucide="globe" class="w-3.5 h-3.5 text-sky-400"></i>
+            <span>ព័ត៌មានមាស &amp; សេដ្ឋកិច្ចពិភពលោក</span>
+          </h2>
+          <div class="flex items-center gap-1.5">
+            <span id="gNewsUpdated" class="text-[10px] text-gray-400 tabular-nums">--</span>
+            <span id="gNewsBiasBadge" class="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-300 font-bold border border-white/10">NEUTRAL</span>
+          </div>
+        </div>
+        <div id="gNewsSummary" class="text-[11px] text-gray-300 mb-2.5">កំពុងទាញព័ត៌មានពី Yahoo, FXStreet, CNBC, Investing, Kitco...</div>
+        <div id="gNewsList" class="space-y-1.5 max-h-52 overflow-y-auto pr-0.5 text-xs"></div>
+      </section>
+
+      <section class="glass p-3.5 rounded-2xl border-t-2 border-t-rose-500/60">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <h2 class="flex items-center gap-1.5 text-xs font-bold text-white uppercase tracking-wider">
+            <i data-lucide="shield-alert" class="w-3.5 h-3.5 text-rose-400"></i>
+            <span>ព័ត៌មានសង្គ្រាម &amp; ភូមិសាស្ត្រនយោបាយ</span>
+          </h2>
+          <div class="flex items-center gap-1.5">
+            <span id="wNewsUpdated" class="text-[10px] text-gray-400 tabular-nums">--</span>
+            <span id="wNewsLevelBadge" class="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-300 font-bold border border-white/10">LOW</span>
+          </div>
+        </div>
+        <div id="wNewsSummary" class="text-[11px] text-gray-300 mb-2.5">កំពុងតាមដានស្ថានភាពជម្លោះពិភពលោក (GDELT, BBC, Al Jazeera)...</div>
+        <div id="wNewsList" class="space-y-1.5 max-h-52 overflow-y-auto pr-0.5 text-xs"></div>
+      </section>
+    </div>
+
+    <!-- V8 AI EXPERT BRAIN (ខាងក្រោមគេ) -->
+    <section id="brainCard" class="glass rounded-2xl p-3.5 border-l-4 border-l-amber-400 space-y-2.5">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-2 min-w-0">
+          <div id="brainIconBox" class="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-400/35 flex items-center justify-center text-amber-300 shrink-0">
+            <i data-lucide="brain-circuit" class="w-4 h-4"></i>
+          </div>
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span class="text-[11px] font-black uppercase tracking-wider text-yellow-400">V8 AI Expert Brain (10-Year Model)</span>
+              <span id="brainModeBadge" class="text-[9px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-400/25 font-bold">DEMO TEST</span>
+              <span id="brainBarTime" class="text-[10px] text-gray-400 tabular-nums">--</span>
+            </div>
+            <div id="brainActionText" class="text-xs sm:text-sm font-black text-amber-300 mt-0.5">កំពុងវិភាគខួរក្បាល AI V8 &amp; ព័ត៌មានពិភពលោក...</div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 shrink-0">
+          <div class="text-right">
+            <div class="text-[9px] text-gray-400 uppercase">AI Rank</div>
+            <div id="brainRankVal" class="text-xs sm:text-sm font-black text-white tabular-nums">--%</div>
+          </div>
+          <span id="brainStatusPill" class="text-[10px] sm:text-[11px] px-2.5 py-1 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-400/35 font-black">SYNC</span>
+        </div>
+      </div>
+
+      <div id="brainMarketBar" class="bg-black/30 rounded-xl px-3 py-2 border border-white/5 text-[11px] text-gray-200 flex items-start gap-2">
+        <i data-lucide="activity" class="w-3.5 h-3.5 text-sky-400 shrink-0 mt-0.5"></i>
+        <span><b class="text-sky-300">ស្ថានភាពទីផ្សារ៖</b> <span id="brainMarketText">កំពុងតាមដាន...</span></span>
+      </div>
+
+      <div id="brainPlanBox" class="hidden grid grid-cols-4 gap-2 text-center bg-black/35 p-2 rounded-xl border border-white/10">
+        <div>
+          <div class="text-[9.5px] text-gray-400">Entry</div>
+          <div id="bpEntry" class="text-xs font-extrabold text-white tabular-nums">--</div>
+        </div>
+        <div>
+          <div class="text-[9.5px] text-gray-400">Stop Loss</div>
+          <div id="bpSl" class="text-xs font-extrabold text-rose-400 tabular-nums">--</div>
+        </div>
+        <div>
+          <div class="text-[9.5px] text-gray-400">Take Profit</div>
+          <div id="bpTp" class="text-xs font-extrabold text-emerald-400 tabular-nums">--</div>
+        </div>
+        <div>
+          <div class="text-[9.5px] text-gray-400">Risk ណែនាំ</div>
+          <div id="bpRisk" class="text-xs font-extrabold text-sky-300 tabular-nums">--</div>
+        </div>
+      </div>
+
+      <ul id="brainReasonsList" class="text-[11px] text-gray-300 space-y-1 list-disc list-inside">
+        <li>កំពុងផ្ទៀងផ្ទាត់ខួរក្បាល V8, SMC, MTF, Macro និងព័ត៌មានសង្គ្រាម...</li>
+      </ul>
+
+      <div class="grid grid-cols-4 gap-1.5 pt-1 border-t border-white/10 text-center">
+        <div class="bg-black/25 rounded-lg py-1 px-1.5">
+          <div class="text-[9px] text-gray-400">DXY</div>
+          <div id="macroDxy" class="text-[11px] font-bold text-gray-200 tabular-nums">--</div>
+        </div>
+        <div class="bg-black/25 rounded-lg py-1 px-1.5">
+          <div class="text-[9px] text-gray-400">US10Y</div>
+          <div id="macroUs10y" class="text-[11px] font-bold text-gray-200 tabular-nums">--</div>
+        </div>
+        <div class="bg-black/25 rounded-lg py-1 px-1.5">
+          <div class="text-[9px] text-gray-400">VIX</div>
+          <div id="macroVix" class="text-[11px] font-bold text-gray-200 tabular-nums">--</div>
+        </div>
+        <div class="bg-black/25 rounded-lg py-1 px-1.5">
+          <div class="text-[9px] text-gray-400">Real 10Y</div>
+          <div id="macroReal10" class="text-[11px] font-bold text-gray-200 tabular-nums">--</div>
+        </div>
+      </div>
+    </section>
+
   </main>
 
-  <script>
-    window.addEventListener('error', e => e.preventDefault());
-    window.addEventListener('unhandledrejection', e => e.preventDefault());
+  <!-- Interactive 3-Slot TP / SL Tracker Modal -->
+  <div id="tpSlModal" class="hidden fixed inset-0 z-[100] bg-black/75 backdrop-blur-sm flex items-center justify-center p-3">
+    <div class="glass rounded-2xl p-4 max-w-sm w-full border border-white/15 space-y-3 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-white/10 pb-2.5">
+        <div class="flex items-center gap-2">
+          <div class="w-7 h-7 rounded-lg bg-yellow-400/15 border border-yellow-400/35 flex items-center justify-center text-yellow-400">
+            <i data-lucide="target" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <div id="tpSlModalTitle" class="text-xs font-black text-white">កំណត់ TP / SL លើក្រាហ្វិក</div>
+            <div class="text-[10px] text-gray-400">តាមដានចំណេញ/ខាតផ្ទាល់ (អតិបរមា ៣ ជើង)</div>
+          </div>
+        </div>
+        <button onclick="closeTpSlModal()" class="p-1 rounded-lg bg-white/5 hover:bg-white/15 text-gray-300">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
 
+      <div id="tpSlLiveStats" class="hidden rounded-xl bg-black/40 border border-white/10 p-2.5 space-y-1.5 text-[11px]">
+        <div class="flex items-center justify-between">
+          <span class="text-gray-400">ស្ថានភាពបច្ចុប្បន្ន</span>
+          <span id="msStatus" class="font-black text-emerald-400">--</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <span class="text-gray-400">ចំណេញ/ខាតផ្ទាល់</span>
+          <span id="msPnl" class="text-sm font-black tabular-nums">--</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2 pt-1 border-t border-white/10 text-[10px]">
+          <div class="text-emerald-300 tabular-nums">នៅសល់ដល់ TP: <b id="msToTp">--</b></div>
+          <div class="text-rose-300 tabular-nums text-right">នៅសល់ដល់ SL: <b id="msToSl">--</b></div>
+        </div>
+      </div>
+
+      <div class="space-y-2.5">
+        <div class="grid grid-cols-2 gap-2">
+          <button type="button" id="msBtnBuy" onclick="setModalSide('BUY')" class="py-2 rounded-xl text-xs font-black border transition">BUY (ឡើង)</button>
+          <button type="button" id="msBtnSell" onclick="setModalSide('SELL')" class="py-2 rounded-xl text-xs font-black border transition">SELL (ចុះ)</button>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-[10px] text-gray-400 mb-1">តម្លៃចូល (Entry $)</label>
+            <input id="msEntry" type="number" step="0.01" class="w-full bg-black/40 border border-white/15 rounded-xl px-2.5 py-2 text-xs font-bold text-white tabular-nums focus:outline-none focus:border-yellow-400" />
+          </div>
+          <div>
+            <label class="block text-[10px] text-gray-400 mb-1">ទំហំ Lot (គណនា $)</label>
+            <input id="msLot" type="number" step="0.01" min="0.01" value="0.05" class="w-full bg-black/40 border border-white/15 rounded-xl px-2.5 py-2 text-xs font-bold text-white tabular-nums focus:outline-none focus:border-sky-400" />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-[10px] text-rose-400 font-bold mb-1">STOP LOSS (SL $)</label>
+            <input id="msSl" type="number" step="0.01" class="w-full bg-black/40 border border-rose-500/40 rounded-xl px-2.5 py-2 text-xs font-bold text-rose-300 tabular-nums focus:outline-none focus:border-rose-400" />
+          </div>
+          <div>
+            <label class="block text-[10px] text-emerald-400 font-bold mb-1">TAKE PROFIT (TP $)</label>
+            <input id="msTp" type="number" step="0.01" class="w-full bg-black/40 border border-emerald-500/40 rounded-xl px-2.5 py-2 text-xs font-bold text-emerald-300 tabular-nums focus:outline-none focus:border-emerald-400" />
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between gap-1.5 text-[10px]">
+          <button type="button" onclick="autoFillModalFromAI()" class="px-2.5 py-1.5 rounded-lg bg-yellow-400/15 hover:bg-yellow-400/25 text-yellow-300 border border-yellow-400/30 font-bold">យកតាម V8 AI</button>
+          <div class="flex gap-1">
+            <button type="button" onclick="quickModalSlTp(3, 6)" class="px-2 py-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-gray-200 font-semibold">$3/$6</button>
+            <button type="button" onclick="quickModalSlTp(5, 10)" class="px-2 py-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-gray-200 font-semibold">$5/$10</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 pt-1">
+        <button id="msDeleteBtn" type="button" onclick="deleteActiveTracker()" class="hidden px-3 py-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500 text-rose-300 hover:text-white border border-rose-500/35 text-xs font-bold transition">
+          លុប
+        </button>
+        <button type="button" onclick="saveTpSlTracker()" class="flex-1 py-2.5 rounded-xl bg-yellow-400 hover:bg-yellow-300 text-[#070b13] text-xs font-black active:scale-95 transition">
+          រក្សាទុក និងបង្ហាញលើក្រាហ្វិក
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
     function escHtml(str) {
       return String(str ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
     }
@@ -558,9 +820,9 @@
 
     const Store = {
       KEYS: {
-        TF: 'tp_tf_v12', CHAT: 'tp_chat_v12', CALC: 'tp_calc_v12',
-        ALERTS: 'tp_alerts_v12', JOURNAL: 'tp_journal_v12',
-        PREFS: 'tp_prefs_v12', CACHE_PREFIX: 'tp_data_v12_'
+        TF: 'tp_tf_v15', CHAT: 'tp_chat_v15', CALC: 'tp_calc_v15',
+        ALERTS: 'tp_alerts_v15', JOURNAL: 'tp_journal_v15',
+        PREFS: 'tp_prefs_v15', CACHE_PREFIX: 'tp_data_v15_'
       },
       get(key, fallback = null) {
         try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : fallback; }
@@ -578,6 +840,7 @@
     };
 
     const SYSTEM_QUESTIONS = [
+      { id: 'brain_v8', text: 'ពិនិត្យសេចក្តីសម្រេចខួរក្បាល AI V8 & ព័ត៌មានសង្គ្រាម/ពិភពលោក', tag: 'AI V8' },
       { id: 'mtf_check', text: 'ផ្ទៀងផ្ទាត់ 4 Timeframes (15m, 1H, 4H, 1D)', tag: 'MTF' },
       { id: 'news_check', text: 'ពិនិត្យព័ត៌មានសេដ្ឋកិច្ចអាមេរិក (USD News)', tag: 'News' },
       { id: 'inst_levels', text: 'តំបន់ PDH, PDL និង Asian Session High/Low', tag: 'Institutional' },
@@ -590,10 +853,13 @@
       { id: 'summary', text: 'សង្ខេបស្ថានភាពទីផ្សារមាសពេញលេញ', tag: 'សង្ខេបរួម' }
     ];
 
-    let currentInterval = Store.get(Store.KEYS.TF, '1m');
+    const defaultCollapsed = window.innerWidth < 640;
+    let currentInterval = Store.get(Store.KEYS.TF, '15m');
     let chatHistory = Store.get(Store.KEYS.CHAT, []);
     let calcPrefs = Store.get(Store.KEYS.CALC, { balance: 1000, risk: 1 });
-    let uiPrefs = Store.get(Store.KEYS.PREFS, { showAI: false, showSignals: true, showZones: true, showSlTp: true, showInst: false });
+    let uiPrefs = Store.get(Store.KEYS.PREFS, {
+      showAI: false, showSignals: true, showZones: true, showSlTp: true, showInst: false, hudCollapsed: defaultCollapsed
+    });
     let priceAlerts = Store.get(Store.KEYS.ALERTS, []);
     let journalEntries = Store.get(Store.KEYS.JOURNAL, []);
     let currentSlDist = 4.0;
@@ -605,7 +871,8 @@
     let wsFailCount = 0, httpPollTimer = null, isAiBusy = false, noticeTimer = null;
     let overlayRaf = null, tickRaf = null, pendingTick = null, lastOverlayTickTs = 0, tickFlashTimer = null;
     let priceLines = { pdh: null, pdl: null, ah: null, al: null, entry: null, sl: null, tp1: null };
-    let lastInstData = null, lastSetupData = null, lastChartSignals = [], lastZones = null;
+    let lastInstData = null, lastSetupData = null, lastChartSignals = [], lastZones = null, lastSmc = null;
+    let activeHudPlan = null, activeHudSide = 'WAIT';
 
     const domLivePrice = document.getElementById('livePrice');
     const domFsPrice = document.getElementById('fsPrice');
@@ -619,6 +886,79 @@
     document.getElementById('calcBalance').value = calcPrefs.balance;
     document.getElementById('calcRisk').value = calcPrefs.risk;
 
+    // ==================== DRAGGABLE & COLLAPSIBLE V8 HUD ====================
+    const chartStageEl = document.getElementById('chartStage');
+    const chartHudEl = document.getElementById('chartHud');
+
+    function applyHudCollapseState() {
+      const collapsed = Boolean(uiPrefs.hudCollapsed);
+      document.getElementById('hudBody').classList.toggle('hidden', collapsed);
+      document.getElementById('hudMiniRow').classList.toggle('hidden', !collapsed);
+      const chev = document.getElementById('hudChevron');
+      if (chev) chev.style.transform = collapsed ? 'rotate(0deg)' : 'rotate(180deg)';
+      clampHudInsideStage();
+    }
+
+    function toggleHudCollapse(e) {
+      if (e) e.stopPropagation();
+      uiPrefs.hudCollapsed = !uiPrefs.hudCollapsed;
+      Store.set(Store.KEYS.PREFS, uiPrefs);
+      applyHudCollapseState();
+    }
+
+    function clampHudInsideStage() {
+      const sw = chartStageEl.clientWidth;
+      const sh = chartStageEl.clientHeight;
+      const hw = chartHudEl.offsetWidth;
+      const hh = chartHudEl.offsetHeight;
+      if (!sw || !sh || !hw || !hh) return;
+      const curL = parseFloat(chartHudEl.style.left) || 8;
+      const curT = parseFloat(chartHudEl.style.top) || 8;
+      const maxL = Math.max(6, sw - hw - 72);
+      const maxT = Math.max(6, sh - hh - 28);
+      chartHudEl.style.left = `${Math.max(6, Math.min(curL, maxL))}px`;
+      chartHudEl.style.top = `${Math.max(6, Math.min(curT, maxT))}px`;
+    }
+
+    (function initHudDrag() {
+      let dragging = false, startX = 0, startY = 0, origL = 8, origT = 8;
+
+      chartHudEl.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('#hudToggleBtn')) return;
+        dragging = true;
+        chartHudEl.classList.add('is-dragging');
+        chartHudEl.setPointerCapture(e.pointerId);
+        startX = e.clientX;
+        startY = e.clientY;
+        origL = parseFloat(chartHudEl.style.left) || chartHudEl.offsetLeft || 8;
+        origT = parseFloat(chartHudEl.style.top) || chartHudEl.offsetTop || 8;
+      });
+
+      chartHudEl.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        const sw = chartStageEl.clientWidth;
+        const sh = chartStageEl.clientHeight;
+        const hw = chartHudEl.offsetWidth;
+        const hh = chartHudEl.offsetHeight;
+        const maxL = Math.max(6, sw - hw - 68);
+        const maxT = Math.max(6, sh - hh - 24);
+        const nx = Math.max(6, Math.min(origL + dx, maxL));
+        const ny = Math.max(6, Math.min(origT + dy, maxT));
+        chartHudEl.style.left = `${nx}px`;
+        chartHudEl.style.top = `${ny}px`;
+      });
+
+      const endDrag = () => {
+        if (!dragging) return;
+        dragging = false;
+        chartHudEl.classList.remove('is-dragging');
+      };
+      chartHudEl.addEventListener('pointerup', endDrag);
+      chartHudEl.addEventListener('pointercancel', endDrag);
+    })();
+
     // ==================== CRISP HIGH-CONTRAST CHART ====================
     const chartContainer = document.getElementById('chart');
     const signalCanvas = document.getElementById('signalCanvas');
@@ -629,7 +969,7 @@
       grid: { vertLines: { color: 'rgba(255,255,255,0.035)' }, horzLines: { color: 'rgba(255,255,255,0.035)' } },
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
       rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)', autoScale: true, scaleMargins: { top: 0.14, bottom: 0.16 } },
-      timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true, secondsVisible: false, rightOffset: 6, barSpacing: 9, minBarSpacing: 3, fixLeftEdge: true },
+      timeScale: { borderColor: 'rgba(255,255,255,0.1)', timeVisible: true, secondsVisible: false, rightOffset: 7, barSpacing: 9, minBarSpacing: 3, fixLeftEdge: true },
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
       handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
     });
@@ -644,7 +984,7 @@
     const ema20Series = chart.addLineSeries({ color: '#38bdf8', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true });
     const ema50Series = chart.addLineSeries({ color: '#f59e0b', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true });
 
-    // ==================== BUY/SELL BOXES & DEMAND ZONE CANVAS ====================
+    // ==================== SMC STRUCTURE + BUY/SELL + 3-SLOT TP/SL CANVAS ====================
     function drawRoundRect(ctx, x, y, w, h, r) {
       ctx.beginPath();
       ctx.moveTo(x + r, y);
@@ -676,42 +1016,113 @@
       sCtx.clearRect(0, 0, w, h);
 
       const plotW = Math.max(0, w - 72), plotH = Math.max(0, h - 26);
+      const tsScale = chart.timeScale();
+
       sCtx.save();
       sCtx.beginPath(); sCtx.rect(0, 0, plotW, plotH); sCtx.clip();
 
-      if (uiPrefs.showZones && lastZones) {
-        if (lastZones.demand) {
+      if (uiPrefs.showZones) {
+        if (lastSmc) {
+          for (const ob of (lastSmc.demand_blocks || [])) {
+            const yTop = candleSeries.priceToCoordinate(ob.top);
+            const yBot = candleSeries.priceToCoordinate(ob.bottom);
+            if (yTop === null || yBot === null) continue;
+            const rawX = tsScale.timeToCoordinate(ob.start_time);
+            const startX = rawX === null ? 0 : Math.max(0, Math.min(plotW - 24, rawX));
+            const topY = Math.min(yTop, yBot), boxH = Math.max(Math.abs(yBot - yTop), 10);
+
+            sCtx.fillStyle = 'rgba(59, 130, 246, 0.20)';
+            sCtx.fillRect(startX, topY, plotW - startX, boxH);
+            sCtx.strokeStyle = 'rgba(96, 165, 250, 0.45)';
+            sCtx.lineWidth = 1;
+            sCtx.beginPath();
+            sCtx.moveTo(startX, topY); sCtx.lineTo(plotW, topY);
+            sCtx.moveTo(startX, topY + boxH); sCtx.lineTo(plotW, topY + boxH);
+            sCtx.stroke();
+            if (boxH >= 12) {
+              sCtx.font = '700 8.5px system-ui, sans-serif';
+              sCtx.fillStyle = 'rgba(147, 197, 253, 0.85)';
+              sCtx.textAlign = 'left'; sCtx.textBaseline = 'middle';
+              sCtx.fillText(ob.label || 'OB', startX + 5, topY + boxH / 2);
+            }
+          }
+
+          for (const sob of (lastSmc.supply_blocks || [])) {
+            const yTop = candleSeries.priceToCoordinate(sob.top);
+            const yBot = candleSeries.priceToCoordinate(sob.bottom);
+            if (yTop === null || yBot === null) continue;
+            const rawX = tsScale.timeToCoordinate(sob.start_time);
+            const startX = rawX === null ? 0 : Math.max(0, Math.min(plotW - 24, rawX));
+            const topY = Math.min(yTop, yBot), boxH = Math.max(Math.abs(yBot - yTop), 10);
+
+            sCtx.fillStyle = 'rgba(244, 63, 94, 0.16)';
+            sCtx.fillRect(startX, topY, plotW - startX, boxH);
+            sCtx.strokeStyle = 'rgba(251, 113, 133, 0.45)';
+            sCtx.lineWidth = 1;
+            sCtx.beginPath();
+            sCtx.moveTo(startX, topY); sCtx.lineTo(plotW, topY);
+            sCtx.moveTo(startX, topY + boxH); sCtx.lineTo(plotW, topY + boxH);
+            sCtx.stroke();
+            if (boxH >= 12) {
+              sCtx.font = '700 8.5px system-ui, sans-serif';
+              sCtx.fillStyle = 'rgba(253, 164, 175, 0.88)';
+              sCtx.textAlign = 'left'; sCtx.textBaseline = 'middle';
+              sCtx.fillText(sob.label || 'OB', startX + 5, topY + boxH / 2);
+            }
+          }
+
+          for (const lv of (lastSmc.levels || [])) {
+            const y = candleSeries.priceToCoordinate(lv.price);
+            if (y === null || y < 8 || y > plotH - 8) continue;
+            const rawX = tsScale.timeToCoordinate(lv.time);
+            const startX = rawX === null ? 0 : Math.max(0, Math.min(plotW - 60, rawX));
+            const isHigh = lv.kind === 'high';
+            sCtx.strokeStyle = isHigh ? 'rgba(248, 113, 113, 0.78)' : 'rgba(52, 211, 153, 0.78)';
+            sCtx.lineWidth = 1.2;
+            sCtx.beginPath(); sCtx.moveTo(startX, y); sCtx.lineTo(plotW - 4, y); sCtx.stroke();
+
+            sCtx.font = '700 9.5px system-ui, sans-serif';
+            sCtx.fillStyle = isHigh ? '#fca5a5' : '#6ee7b7';
+            sCtx.textAlign = 'right';
+            sCtx.textBaseline = isHigh ? 'bottom' : 'top';
+            sCtx.fillText(lv.label, plotW - 8, isHigh ? y - 3 : y + 3);
+          }
+
+          for (const br of (lastSmc.breaks || [])) {
+            const y = candleSeries.priceToCoordinate(br.price);
+            const x1 = tsScale.timeToCoordinate(br.start_time);
+            const x2 = tsScale.timeToCoordinate(br.end_time);
+            if (y === null || x2 === null || x2 < 0 || (x1 !== null && x1 > plotW)) continue;
+            const sx = x1 === null ? 0 : Math.max(0, x1);
+            const ex = Math.min(plotW, x2);
+            if (ex - sx < 8) continue;
+
+            const isUp = br.type.endsWith('_UP');
+            sCtx.strokeStyle = isUp ? 'rgba(52, 211, 153, 0.78)' : 'rgba(248, 113, 113, 0.78)';
+            sCtx.lineWidth = 1;
+            sCtx.setLineDash([4, 3]);
+            sCtx.beginPath(); sCtx.moveTo(sx, y); sCtx.lineTo(ex, y); sCtx.stroke();
+            sCtx.setLineDash([]);
+
+            const midX = (sx + ex) / 2;
+            sCtx.font = '800 8.5px system-ui, sans-serif';
+            sCtx.fillStyle = isUp ? '#6ee7b7' : '#fda4af';
+            sCtx.textAlign = 'center';
+            sCtx.textBaseline = isUp ? 'bottom' : 'top';
+            sCtx.fillText(br.label, midX, isUp ? y - 2 : y + 2);
+          }
+        } else if (lastZones?.demand) {
           const yTop = candleSeries.priceToCoordinate(lastZones.demand.top);
           const yBot = candleSeries.priceToCoordinate(lastZones.demand.bottom);
           if (yTop !== null && yBot !== null) {
             const topY = Math.min(yTop, yBot), boxH = Math.max(Math.abs(yBot - yTop), 14);
             sCtx.fillStyle = 'rgba(59, 130, 246, 0.22)';
             sCtx.fillRect(0, topY, plotW, boxH);
-            sCtx.strokeStyle = 'rgba(96, 165, 250, 0.55)';
-            sCtx.lineWidth = 1;
-            sCtx.beginPath(); sCtx.moveTo(0, topY); sCtx.lineTo(plotW, topY); sCtx.moveTo(0, topY + boxH); sCtx.lineTo(plotW, topY + boxH); sCtx.stroke();
-            sCtx.font = '700 9px system-ui, sans-serif';
-            sCtx.fillStyle = 'rgba(147, 197, 253, 0.92)';
-            sCtx.textAlign = 'left'; sCtx.textBaseline = 'top';
-            sCtx.fillText('DEMAND ZONE', 8, topY + 4);
-          }
-        }
-        if (lastZones.supply) {
-          const yTop = candleSeries.priceToCoordinate(lastZones.supply.top);
-          const yBot = candleSeries.priceToCoordinate(lastZones.supply.bottom);
-          if (yTop !== null && yBot !== null) {
-            const topY = Math.min(yTop, yBot), boxH = Math.max(Math.abs(yBot - yTop), 12);
-            sCtx.fillStyle = 'rgba(244, 63, 94, 0.11)';
-            sCtx.fillRect(0, topY, plotW, boxH);
-            sCtx.strokeStyle = 'rgba(244, 63, 94, 0.35)';
-            sCtx.lineWidth = 1;
-            sCtx.beginPath(); sCtx.moveTo(0, topY); sCtx.lineTo(plotW, topY); sCtx.moveTo(0, topY + boxH); sCtx.lineTo(plotW, topY + boxH); sCtx.stroke();
           }
         }
       }
 
       if (uiPrefs.showSignals && Array.isArray(lastChartSignals)) {
-        const tsScale = chart.timeScale();
         for (const sig of lastChartSignals) {
           const x = tsScale.timeToCoordinate(sig.time);
           const y = candleSeries.priceToCoordinate(sig.price);
@@ -758,18 +1169,12 @@
             sCtx.beginPath(); sCtx.moveTo(x - 4, cy - 4); sCtx.lineTo(x + 4, cy + 4); sCtx.moveTo(x + 4, cy - 4); sCtx.lineTo(x - 4, cy + 4); sCtx.stroke();
             sCtx.font = '800 8.5px system-ui, sans-serif'; sCtx.fillStyle = '#fda4af'; sCtx.textAlign = 'center';
             sCtx.fillText('SL', x, cy - 9);
-          } else if (sig.type === 'CHoCH_UP' || sig.type === 'CHoCH_DN') {
-            const isUp = sig.type === 'CHoCH_UP';
-            const ly = isUp ? Math.max(12, y - 14) : Math.min(plotH - 12, y + 14);
-            sCtx.strokeStyle = isUp ? 'rgba(56, 189, 248, 0.6)' : 'rgba(251, 191, 36, 0.6)';
-            sCtx.lineWidth = 1; sCtx.setLineDash([3, 2]);
-            sCtx.beginPath(); sCtx.moveTo(x - 16, ly); sCtx.lineTo(x + 16, ly); sCtx.stroke(); sCtx.setLineDash([]);
-            sCtx.font = '700 8.5px system-ui, sans-serif'; sCtx.fillStyle = isUp ? '#7dd3fc' : '#fcd34d';
-            sCtx.textAlign = 'center'; sCtx.textBaseline = 'middle';
-            sCtx.fillText('CHoCH', x, ly - 7);
           }
         }
       }
+
+      // Draw 3-Slot Interactive TP/SL Zones
+      drawTpSlZonesOnCanvas(sCtx, plotW, plotH);
       sCtx.restore();
     }
 
@@ -810,6 +1215,7 @@
           chart.applyOptions({ width: e.contentRect.width, height: e.contentRect.height });
           requestAnimationFrame(() => {
             if (lastPrice) updateAxisLivePill(lastPrice, 0);
+            clampHudInsideStage();
             renderOverlayNow();
           });
         }
@@ -820,8 +1226,8 @@
       try {
         chart.priceScale('right').applyOptions({ autoScale: true });
         if (candleCount > 10) {
-          const visibleBars = isFullscreen ? 65 : 44;
-          chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, candleCount - visibleBars), to: candleCount + 5 });
+          const visibleBars = isFullscreen ? 65 : 46;
+          chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, candleCount - visibleBars), to: candleCount + 6 });
         } else {
           chart.timeScale().fitContent();
         }
@@ -850,6 +1256,7 @@
 
       setTimeout(() => {
         chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight });
+        clampHudInsideStage();
         resetChartView();
       }, 60);
     }
@@ -858,6 +1265,7 @@
     window.addEventListener('orientationchange', () => {
       setTimeout(() => {
         chart.applyOptions({ width: chartContainer.clientWidth, height: chartContainer.clientHeight });
+        clampHudInsideStage();
         if (lastPrice) updateAxisLivePill(lastPrice, 0);
         scheduleOverlay();
       }, 220);
@@ -882,12 +1290,13 @@
     }
 
     function drawSlTpLines() {
-      const hud = document.getElementById('chartHud');
-      if (!uiPrefs.showSlTp || !lastSetupData) { ['entry', 'sl', 'tp1'].forEach(k => setLine(k, null)); hud.classList.add('hidden'); return; }
-      hud.classList.remove('hidden');
-      setLine('entry', lastSetupData.entry, 'rgba(250,204,21,0.75)', 'ENTRY', LightweightCharts.LineStyle.Solid);
-      setLine('sl', lastSetupData.sl, 'rgba(244,63,94,0.85)', 'SL', LightweightCharts.LineStyle.Solid);
-      setLine('tp1', lastSetupData.tp1, 'rgba(16,185,129,0.85)', 'TP1', LightweightCharts.LineStyle.Solid);
+      const plan = activeHudPlan || lastSetupData;
+      if (!uiPrefs.showSlTp || !plan) { ['entry', 'sl', 'tp1'].forEach(k => setLine(k, null)); chartHudEl.classList.add('hidden'); return; }
+      chartHudEl.classList.remove('hidden');
+      setLine('entry', plan.entry, 'rgba(250,204,21,0.75)', 'ENTRY', LightweightCharts.LineStyle.Solid);
+      setLine('sl', plan.sl, 'rgba(244,63,94,0.85)', 'SL', LightweightCharts.LineStyle.Solid);
+      setLine('tp1', plan.tp || plan.tp1, 'rgba(16,185,129,0.85)', 'TP1', LightweightCharts.LineStyle.Solid);
+      clampHudInsideStage();
     }
 
     function toggleSignals(checked) { uiPrefs.showSignals = checked; Store.set(Store.KEYS.PREFS, uiPrefs); scheduleOverlay(); }
@@ -907,6 +1316,344 @@
       sec.classList.toggle('hidden', !uiPrefs.showAI);
       if (uiPrefs.showAI && scroll) setTimeout(() => sec.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
       else hideQuestionDropdown();
+    }
+
+    // ==================== PRECISION HUD (V8 BRAIN POWERED) ====================
+    function updateHudProgress(price) {
+      if (!activeHudPlan || !price || activeHudSide === 'WAIT') return;
+      const sl = Number(activeHudPlan.sl);
+      const tp = Number(activeHudPlan.tp || activeHudPlan.tp1);
+      const entry = Number(activeHudPlan.entry);
+      const total = Math.abs(tp - sl);
+      if (!total || isNaN(total)) return;
+
+      const pct = activeHudSide === 'BUY' ? ((price - sl) / total) * 100 : ((sl - price) / total) * 100;
+      const clamped = Math.max(4, Math.min(100, pct));
+
+      const bar = document.getElementById('hudProgBar');
+      const txt = document.getElementById('hudProgTxt');
+      if (bar) {
+        bar.style.width = `${clamped}%`;
+        bar.className = clamped >= 50 ? 'h-full bg-emerald-400 transition-all duration-200' : 'h-full bg-rose-400 transition-all duration-200';
+      }
+      if (txt) {
+        const diff = activeHudSide === 'BUY' ? (price - entry) : (entry - price);
+        txt.textContent = `${diff >= 0 ? '+' : ''}${diff.toFixed(2)}`;
+        txt.className = diff >= 0 ? 'text-emerald-400 tabular-nums' : 'text-rose-400 tabular-nums';
+      }
+    }
+
+    function updatePrecisionHud(data) {
+      const brain = data.brain || null;
+      const setup = data.setup || null;
+      const hudDot = document.getElementById('hudDot');
+      const hudSide = document.getElementById('hudSide');
+      const hudGrade = document.getElementById('hudGrade');
+
+      const plan = brain?.plan || (setup ? {
+        entry: setup.entry,
+        sl: setup.sl,
+        tp: setup.tp1,
+        tp2: setup.tp2,
+        sl_pips: Math.round(Math.abs(setup.entry - setup.sl) * 10),
+        tp_pips: Math.round(Math.abs(setup.tp1 - setup.entry) * 10),
+        tp2_pips: setup.tp2 ? Math.round(Math.abs(setup.tp2 - setup.entry) * 10) : null,
+        rr: setup.rr || '2 : 1',
+        entry_state: 'IN_ZONE',
+        entry_km: 'ចូលបាន'
+      } : null);
+
+      const side = (brain && brain.side && brain.side !== 'NONE')
+        ? brain.side
+        : (data.active_signal?.side || (String(data.signal || '').includes('BUY') ? 'BUY' : String(data.signal || '').includes('SELL') ? 'SELL' : 'WAIT'));
+
+      activeHudPlan = plan;
+      activeHudSide = side;
+
+      hudSide.textContent = side;
+      hudGrade.textContent = brain?.confidence_score
+        ? `${brain.grade || 'V8'} ${brain.confidence_score}%`
+        : `${data.confidence || 50}%`;
+
+      if (side === 'BUY') {
+        chartHudEl.style.borderLeftColor = '#10b981';
+        hudDot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0';
+        hudSide.className = 'text-[11px] font-black tracking-wide text-emerald-400';
+      } else if (side === 'SELL') {
+        chartHudEl.style.borderLeftColor = '#f43f5e';
+        hudDot.className = 'w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0';
+        hudSide.className = 'text-[11px] font-black tracking-wide text-rose-400';
+      } else {
+        chartHudEl.style.borderLeftColor = '#facc15';
+        hudDot.className = 'w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0';
+        hudSide.className = 'text-[11px] font-black tracking-wide text-yellow-400';
+      }
+
+      if (plan && plan.entry) {
+        const slNum = Number(plan.sl).toFixed(2);
+        const tpNum = Number(plan.tp).toFixed(2);
+        document.getElementById('hudMiniSl').textContent = slNum;
+        document.getElementById('hudMiniTp').textContent = tpNum;
+        document.getElementById('hudEntry').textContent = `$${Number(plan.entry).toFixed(2)}`;
+        document.getElementById('hudSl').textContent = `$${slNum}`;
+        document.getElementById('hudTp').textContent = `$${tpNum}`;
+        document.getElementById('hudTp2').textContent = plan.tp2 ? `$${Number(plan.tp2).toFixed(2)}` : '--';
+        document.getElementById('hudSlPips').textContent = plan.sl_pips ? `(-${plan.sl_pips})` : '';
+        document.getElementById('hudTpPips').textContent = plan.tp_pips ? `(+${plan.tp_pips})` : '';
+        document.getElementById('hudTp2Pips').textContent = plan.tp2_pips ? `(+${plan.tp2_pips})` : '';
+        document.getElementById('hudRr').textContent = plan.rr || '2 : 1';
+
+        const stBadge = document.getElementById('hudEntryState');
+        stBadge.textContent = plan.entry_km || 'ចូលបាន';
+        stBadge.className = plan.entry_state === 'IN_ZONE'
+          ? 'text-[8px] px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold'
+          : plan.entry_state === 'PULLBACK'
+          ? 'text-[8px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold'
+          : 'text-[8px] px-1 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold';
+
+        if (lastPrice) updateHudProgress(lastPrice);
+      }
+    }
+
+    // ==================== 3-SLOT VISUAL TP/SL ZONE TRACKER ====================
+    const TPSL_KEY = 'tp_sl_trackers_v1';
+    const MAX_TPSL_SLOTS = 3;
+    let tpSlTrackers = Store.get(TPSL_KEY, []);
+    let selectedTrackerIdx = -1;
+    let modalSide = 'BUY';
+    let tpSlHitBoxes = [];
+
+    function saveTrackersStore() { Store.set(TPSL_KEY, tpSlTrackers); }
+
+    function calcTrackerPnl(tr, price) {
+      if (!price || !tr) return { usd: 0, pips: 0 };
+      const diff = tr.side === 'BUY' ? (price - tr.entry) : (tr.entry - price);
+      return { usd: diff * (tr.lot || 0.05) * 100, pips: Math.round(diff * 10) };
+    }
+
+    function renderTpSlSlotBar() {
+      const bar = document.getElementById('tpSlSlotBar');
+      if (!bar) return;
+      let html = '';
+      for (let i = 0; i < MAX_TPSL_SLOTS; i++) {
+        const tr = tpSlTrackers[i];
+        if (tr) {
+          const res = calcTrackerPnl(tr, lastPrice || tr.entry);
+          const pnlCls = res.usd >= 0 ? 'text-emerald-400' : 'text-rose-400';
+          const borderCls = tr.status === 'HIT_TP' ? 'border-emerald-400 bg-emerald-500/20'
+            : tr.status === 'HIT_SL' ? 'border-rose-500 bg-rose-500/20'
+            : tr.side === 'BUY' ? 'border-emerald-500/35 bg-emerald-500/10' : 'border-rose-500/35 bg-rose-500/10';
+          const tagTxt = tr.status === 'HIT_TP' ? 'TP!' : tr.status === 'HIT_SL' ? 'SL!' : tr.side;
+          html += `
+            <button onclick="openTpSlModal(${i})" class="flex items-center gap-1.5 px-2 py-1 rounded-lg border ${borderCls} text-[10px] font-bold active:scale-95 transition whitespace-nowrap">
+              <span class="text-white">#${i + 1} ${tagTxt}</span>
+              <span id="slot-pnl-${i}" class="${pnlCls} tabular-nums font-black">${res.usd >= 0 ? '+' : ''}$${res.usd.toFixed(2)}</span>
+            </button>`;
+        } else {
+          html += `
+            <button onclick="openTpSlModal(${i})" class="px-2 py-1 rounded-lg border border-dashed border-white/15 bg-white/5 hover:bg-white/10 text-[10px] text-gray-400 font-semibold transition whitespace-nowrap">
+              + #${i + 1}
+            </button>`;
+        }
+      }
+      bar.innerHTML = html;
+    }
+
+    function updateTpSlLiveTick(price) {
+      if (!price || !tpSlTrackers.length) return;
+      let changed = false;
+      tpSlTrackers.forEach((tr, i) => {
+        if (!tr) return;
+        const res = calcTrackerPnl(tr, price);
+        const el = document.getElementById(`slot-pnl-${i}`);
+        if (el) {
+          el.textContent = `${res.usd >= 0 ? '+' : ''}$${res.usd.toFixed(2)}`;
+          el.className = `${res.usd >= 0 ? 'text-emerald-400' : 'text-rose-400'} tabular-nums font-black`;
+        }
+        if (tr.status === 'ACTIVE') {
+          const hitTp = tr.side === 'BUY' ? (price >= tr.tp) : (price <= tr.tp);
+          const hitSl = tr.side === 'BUY' ? (price <= tr.sl) : (price >= tr.sl);
+          if (hitTp) {
+            tr.status = 'HIT_TP'; changed = true; playAlertChime();
+            document.getElementById('alertToastMsg').textContent = `ជើង #${i + 1} (${tr.side}) ដល់ TAKE PROFIT $${tr.tp.toFixed(2)} ហើយ! (+$${Math.abs(res.usd).toFixed(2)})`;
+            document.getElementById('alertToast').classList.remove('hidden');
+          } else if (hitSl) {
+            tr.status = 'HIT_SL'; changed = true; playAlertChime();
+            document.getElementById('alertToastMsg').textContent = `ប្រយ័ត្ន! ជើង #${i + 1} (${tr.side}) ប៉ះ STOP LOSS $${tr.sl.toFixed(2)} ហើយ!`;
+            document.getElementById('alertToast').classList.remove('hidden');
+          }
+        }
+      });
+      if (changed) { saveTrackersStore(); renderTpSlSlotBar(); }
+      if (selectedTrackerIdx >= 0 && !document.getElementById('tpSlModal').classList.contains('hidden')) {
+        updateModalLiveStats(tpSlTrackers[selectedTrackerIdx]);
+      }
+    }
+
+    function drawTpSlZonesOnCanvas(ctx, plotW, plotH) {
+      tpSlHitBoxes = [];
+      if (!tpSlTrackers.length) return;
+      const boxW = Math.min(155, Math.max(104, plotW * 0.30));
+
+      tpSlTrackers.forEach((tr, i) => {
+        if (!tr) return;
+        const yEntry = candleSeries.priceToCoordinate(tr.entry);
+        const yTp = candleSeries.priceToCoordinate(tr.tp);
+        const ySl = candleSeries.priceToCoordinate(tr.sl);
+        if (yEntry === null || yTp === null || ySl === null) return;
+
+        const xRight = plotW - 10 - (i * 14);
+        const xLeft = Math.max(8, xRight - boxW);
+
+        const tpTop = Math.min(yEntry, yTp), tpH = Math.max(Math.abs(yTp - yEntry), 4);
+        ctx.fillStyle = 'rgba(16, 185, 129, 0.22)';
+        ctx.fillRect(xLeft, tpTop, xRight - xLeft, tpH);
+        ctx.strokeStyle = 'rgba(52, 211, 153, 0.85)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.moveTo(xLeft, yTp); ctx.lineTo(xRight, yTp); ctx.stroke();
+        ctx.setLineDash([]);
+
+        const slTop = Math.min(yEntry, ySl), slH = Math.max(Math.abs(ySl - yEntry), 4);
+        ctx.fillStyle = 'rgba(244, 63, 94, 0.22)';
+        ctx.fillRect(xLeft, slTop, xRight - xLeft, slH);
+        ctx.strokeStyle = 'rgba(251, 113, 133, 0.85)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.moveTo(xLeft, ySl); ctx.lineTo(xRight, ySl); ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.strokeStyle = '#facc15';
+        ctx.lineWidth = 1.3;
+        ctx.beginPath(); ctx.moveTo(xLeft, yEntry); ctx.lineTo(xRight, yEntry); ctx.stroke();
+
+        const res = calcTrackerPnl(tr, lastPrice || tr.entry);
+        const tagW = xRight - xLeft;
+        ctx.font = '800 9px system-ui, sans-serif';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+
+        ctx.fillStyle = '#6ee7b7';
+        ctx.fillText(`TP #${i + 1}: $${tr.tp.toFixed(2)}`, xLeft + 5, yTp + (yTp < yEntry ? 9 : -9));
+        ctx.fillStyle = '#fda4af';
+        ctx.fillText(`SL #${i + 1}: $${tr.sl.toFixed(2)}`, xLeft + 5, ySl + (ySl > yEntry ? -9 : 9));
+
+        drawRoundRect(ctx, xLeft + 2, yEntry - 9, Math.min(tagW - 4, 134), 18, 4);
+        ctx.fillStyle = 'rgba(7, 13, 25, 0.92)'; ctx.fill();
+        ctx.strokeStyle = res.usd >= 0 ? '#10b981' : '#f43f5e'; ctx.lineWidth = 1; ctx.stroke();
+        ctx.fillStyle = res.usd >= 0 ? '#34d399' : '#fb7185';
+        ctx.fillText(`#${i + 1} ${tr.side} ${res.usd >= 0 ? '+' : ''}$${res.usd.toFixed(2)}`, xLeft + 7, yEntry + 0.5);
+
+        tpSlHitBoxes.push({ idx: i, x1: xLeft, y1: Math.min(yEntry, yTp, ySl) - 8, x2: xRight, y2: Math.max(yEntry, yTp, ySl) + 8 });
+      });
+    }
+
+    chartContainer.addEventListener('click', (e) => {
+      if (!tpSlHitBoxes.length) return;
+      const rect = chartContainer.getBoundingClientRect();
+      const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+      for (let i = tpSlHitBoxes.length - 1; i >= 0; i--) {
+        const b = tpSlHitBoxes[i];
+        if (cx >= b.x1 && cx <= b.x2 && cy >= b.y1 && cy <= b.y2) {
+          openTpSlModal(b.idx);
+          break;
+        }
+      }
+    });
+
+    function setModalSide(s) {
+      modalSide = s;
+      const bBuy = document.getElementById('msBtnBuy'), bSell = document.getElementById('msBtnSell');
+      bBuy.className = s === 'BUY'
+        ? 'py-2 rounded-xl text-xs font-black border border-emerald-400 bg-emerald-500 text-[#070b13]'
+        : 'py-2 rounded-xl text-xs font-bold border border-white/10 bg-white/5 text-gray-300';
+      bSell.className = s === 'SELL'
+        ? 'py-2 rounded-xl text-xs font-black border border-rose-400 bg-rose-500 text-white'
+        : 'py-2 rounded-xl text-xs font-bold border border-white/10 bg-white/5 text-gray-300';
+    }
+
+    function updateModalLiveStats(tr) {
+      if (!tr || !lastPrice) return;
+      const res = calcTrackerPnl(tr, lastPrice);
+      const toTp = Math.round((tr.side === 'BUY' ? (tr.tp - lastPrice) : (lastPrice - tr.tp)) * 10);
+      const toSl = Math.round((tr.side === 'BUY' ? (lastPrice - tr.sl) : (tr.sl - lastPrice)) * 10);
+      document.getElementById('msStatus').textContent = tr.status === 'HIT_TP' ? 'ដល់គោលដៅ TP ហើយ!' : tr.status === 'HIT_SL' ? 'ប៉ះ Stop Loss ហើយ!' : 'កំពុងតាមដានផ្ទាល់...';
+      const pnlEl = document.getElementById('msPnl');
+      pnlEl.textContent = `${res.usd >= 0 ? '+' : ''}$${res.usd.toFixed(2)} (${res.pips >= 0 ? '+' : ''}${res.pips} pips)`;
+      pnlEl.className = `text-sm font-black tabular-nums ${res.usd >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+      document.getElementById('msToTp').textContent = `${toTp} pips`;
+      document.getElementById('msToSl').textContent = `${toSl} pips`;
+    }
+
+    function openTpSlModal(idx) {
+      if (idx === -1) {
+        idx = tpSlTrackers.findIndex(t => !t);
+        if (idx === -1) idx = tpSlTrackers.length < MAX_TPSL_SLOTS ? tpSlTrackers.length : 0;
+      }
+      selectedTrackerIdx = idx;
+      const tr = tpSlTrackers[idx];
+      document.getElementById('tpSlModalTitle').textContent = tr ? `តាមដាន / កែ TP & SL (ជើង #${idx + 1})` : `បន្ថែម TP & SL ថ្មី (ជើង #${idx + 1})`;
+      document.getElementById('msDeleteBtn').classList.toggle('hidden', !tr);
+      document.getElementById('tpSlLiveStats').classList.toggle('hidden', !tr);
+
+      if (tr) {
+        setModalSide(tr.side);
+        document.getElementById('msEntry').value = tr.entry.toFixed(2);
+        document.getElementById('msSl').value = tr.sl.toFixed(2);
+        document.getElementById('msTp').value = tr.tp.toFixed(2);
+        document.getElementById('msLot').value = (tr.lot || 0.05).toFixed(2);
+        updateModalLiveStats(tr);
+      } else {
+        const px = lastPrice || 3570;
+        setModalSide(activeHudSide === 'SELL' ? 'SELL' : 'BUY');
+        document.getElementById('msEntry').value = px.toFixed(2);
+        document.getElementById('msLot').value = '0.05';
+        quickModalSlTp(4, 8);
+      }
+      document.getElementById('tpSlModal').classList.remove('hidden');
+      lucide.createIcons();
+    }
+
+    function closeTpSlModal() { document.getElementById('tpSlModal').classList.add('hidden'); }
+
+    function quickModalSlTp(slDist, tpDist) {
+      const entry = parseFloat(document.getElementById('msEntry').value) || lastPrice || 3570;
+      document.getElementById('msSl').value = (modalSide === 'BUY' ? entry - slDist : entry + slDist).toFixed(2);
+      document.getElementById('msTp').value = (modalSide === 'BUY' ? entry + tpDist : entry - tpDist).toFixed(2);
+    }
+
+    function autoFillModalFromAI() {
+      const p = activeHudPlan || lastSetupData;
+      if (!p) return;
+      setModalSide(activeHudSide === 'SELL' ? 'SELL' : 'BUY');
+      document.getElementById('msEntry').value = Number(p.entry).toFixed(2);
+      document.getElementById('msSl').value = Number(p.sl).toFixed(2);
+      document.getElementById('msTp').value = Number(p.tp || p.tp1).toFixed(2);
+    }
+
+    function saveTpSlTracker() {
+      const entry = parseFloat(document.getElementById('msEntry').value);
+      const sl = parseFloat(document.getElementById('msSl').value);
+      const tp = parseFloat(document.getElementById('msTp').value);
+      const lot = Math.max(0.01, parseFloat(document.getElementById('msLot').value) || 0.05);
+      if (!entry || !sl || !tp) return;
+      if (modalSide === 'BUY' && (sl >= entry || tp <= entry)) { alert('សម្រាប់ BUY៖ SL ត្រូវទាបជាង Entry ហើយ TP ត្រូវខ្ពស់ជាង Entry!'); return; }
+      if (modalSide === 'SELL' && (sl <= entry || tp >= entry)) { alert('សម្រាប់ SELL៖ SL ត្រូវខ្ពស់ជាង Entry ហើយ TP ត្រូវទាបជាង Entry!'); return; }
+
+      tpSlTrackers[selectedTrackerIdx] = { side: modalSide, entry, sl, tp, lot, status: 'ACTIVE' };
+      saveTrackersStore();
+      renderTpSlSlotBar();
+      scheduleOverlay();
+      closeTpSlModal();
+    }
+
+    function deleteActiveTracker() {
+      if (selectedTrackerIdx >= 0) {
+        tpSlTrackers.splice(selectedTrackerIdx, 1);
+        saveTrackersStore();
+        renderTpSlSlotBar();
+        scheduleOverlay();
+      }
+      closeTpSlModal();
     }
 
     // ==================== SOUND ALERTS & JOURNAL ====================
@@ -996,6 +1743,155 @@
         </div>`).join('');
     }
 
+    // ==================== V8 BRAIN + GLOBAL NEWS + WAR NEWS RENDERERS ====================
+    function renderBrainV8(brain) {
+      if (!brain) return;
+      const card = document.getElementById('brainCard');
+      const iconBox = document.getElementById('brainIconBox');
+      const actionEl = document.getElementById('brainActionText');
+      const pill = document.getElementById('brainStatusPill');
+      const modeBadge = document.getElementById('brainModeBadge');
+      const rankEl = document.getElementById('brainRankVal');
+      const barTimeEl = document.getElementById('brainBarTime');
+      const planBox = document.getElementById('brainPlanBox');
+
+      barTimeEl.textContent = brain.bar_time ? `ទៀន ${brain.bar_time}` : '';
+      rankEl.textContent = brain.ai_rank_pct !== null && brain.ai_rank_pct !== undefined
+        ? `${brain.ai_rank_pct}% / ${brain.cutoff_pct || 50}%`
+        : `${brain.confidence_score || '--'}%`;
+
+      if (brain.deployable) {
+        modeBadge.textContent = 'LIVE VERIFIED';
+        modeBadge.className = 'text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-400/30 font-bold';
+      } else {
+        modeBadge.textContent = 'V8 + TACTICAL';
+        modeBadge.className = 'text-[9px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-400/25 font-bold';
+      }
+
+      actionEl.textContent = brain.action_km || '--';
+      document.getElementById('brainMarketText').textContent = brain.market_state?.summary_km || 'កំពុងតាមដាន...';
+
+      if (brain.status === 'APPROVED_BUY') {
+        card.className = 'glass rounded-2xl p-3.5 border-l-4 border-l-emerald-400 space-y-2.5';
+        iconBox.className = 'w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-300 shrink-0';
+        actionEl.className = 'text-xs sm:text-sm font-black text-emerald-400 mt-0.5';
+        pill.textContent = `BUY • ${brain.grade || 'A'}`;
+        pill.className = 'text-[10px] sm:text-[11px] px-2.5 py-1 rounded-xl bg-emerald-500 text-[#070b13] font-black shadow-lg shadow-emerald-500/25';
+      } else if (brain.status === 'APPROVED_SELL') {
+        card.className = 'glass rounded-2xl p-3.5 border-l-4 border-l-rose-500 space-y-2.5';
+        iconBox.className = 'w-8 h-8 rounded-xl bg-rose-500/20 border border-rose-400/40 flex items-center justify-center text-rose-300 shrink-0';
+        actionEl.className = 'text-xs sm:text-sm font-black text-rose-400 mt-0.5';
+        pill.textContent = `SELL • ${brain.grade || 'A'}`;
+        pill.className = 'text-[10px] sm:text-[11px] px-2.5 py-1 rounded-xl bg-rose-500 text-white font-black shadow-lg shadow-rose-500/25';
+      } else {
+        card.className = 'glass rounded-2xl p-3.5 border-l-4 border-l-amber-400 space-y-2.5';
+        iconBox.className = 'w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-400/35 flex items-center justify-center text-amber-300 shrink-0';
+        actionEl.className = 'text-xs sm:text-sm font-black text-amber-300 mt-0.5';
+        pill.textContent = brain.status === 'BLOCKED' ? 'BLOCKED' : 'WAIT';
+        pill.className = 'text-[10px] sm:text-[11px] px-2.5 py-1 rounded-xl bg-rose-500/20 text-rose-300 border border-rose-400/35 font-black';
+      }
+
+      if (brain.plan) {
+        planBox.classList.remove('hidden');
+        document.getElementById('bpEntry').textContent = `$${Number(brain.plan.entry).toFixed(2)}`;
+        document.getElementById('bpSl').textContent = `$${Number(brain.plan.sl).toFixed(2)}`;
+        document.getElementById('bpTp').textContent = `$${Number(brain.plan.tp).toFixed(2)}`;
+        document.getElementById('bpRisk').textContent = `${brain.plan.suggested_risk_pct}%`;
+      } else {
+        planBox.classList.add('hidden');
+      }
+
+      const reasons = Array.isArray(brain.reasons) && brain.reasons.length ? brain.reasons : ['កំពុងរង់ចាំលក្ខខណ្ឌច្បាស់លាស់'];
+      document.getElementById('brainReasonsList').innerHTML = reasons.map(r => `<li>${escHtml(r)}</li>`).join('');
+
+      if (brain.macro) {
+        document.getElementById('macroDxy').textContent = brain.macro.dxy !== null ? brain.macro.dxy : '--';
+        document.getElementById('macroUs10y').textContent = brain.macro.us10y !== null ? `${brain.macro.us10y}%` : '--';
+        document.getElementById('macroVix').textContent = brain.macro.vix !== null ? brain.macro.vix : '--';
+        document.getElementById('macroReal10').textContent = brain.macro.real10 !== null ? `${brain.macro.real10}%` : '--';
+      }
+
+      if (brain.global_news) renderGlobalNews(brain.global_news);
+      if (brain.war_news) renderWarNews(brain.war_news);
+    }
+
+    function renderGlobalNews(gn) {
+      if (!gn) return;
+      document.getElementById('gNewsUpdated').textContent = gn.updated_at || '';
+      document.getElementById('gNewsSummary').textContent = gn.summary_km || '';
+      const bEl = document.getElementById('gNewsBiasBadge');
+      const scoreTxt = typeof gn.score === 'number' ? ` (${gn.score >= 0 ? '+' : ''}${gn.score.toFixed(2)})` : '';
+      bEl.textContent = `${gn.bias || 'NEUTRAL'}${scoreTxt}`;
+      bEl.className = gn.bias === 'BULLISH'
+        ? 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30'
+        : gn.bias === 'BEARISH'
+        ? 'text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30'
+        : 'text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-300 font-bold border border-white/10';
+
+      const listEl = document.getElementById('gNewsList');
+      const items = gn.headlines || [];
+      if (!items.length) {
+        listEl.innerHTML = '<div class="text-[11px] text-gray-500">មិនទាន់មានចំណងជើងព័ត៌មានមាសថ្មីៗនៅឡើយទេ។</div>';
+        return;
+      }
+      listEl.innerHTML = items.map(it => {
+        const tagCls = it.impact === 'BULLISH'
+          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/25'
+          : it.impact === 'BEARISH'
+          ? 'bg-rose-500/15 text-rose-400 border-rose-500/25'
+          : 'bg-white/5 text-gray-400 border-white/10';
+        const linkOpen = it.link ? `<a href="${escHtml(it.link)}" target="_blank" rel="noopener noreferrer" class="hover:text-yellow-300 transition">` : '<span>';
+        const linkClose = it.link ? '</a>' : '</span>';
+        return `
+          <div class="flex items-start justify-between gap-2 bg-black/30 border border-white/5 rounded-xl px-2.5 py-2">
+            <div class="min-w-0 flex-1">
+              <div class="text-[11px] text-gray-100 leading-snug">${linkOpen}${escHtml(it.title)}${linkClose}</div>
+              <div class="text-[9.5px] text-gray-500 mt-0.5">${escHtml(it.source)}</div>
+            </div>
+            <span class="shrink-0 text-[9px] px-1.5 py-0.5 rounded font-bold border ${tagCls}">${escHtml(it.impact)}</span>
+          </div>`;
+      }).join('');
+    }
+
+    function renderWarNews(wn) {
+      if (!wn) return;
+      document.getElementById('wNewsUpdated').textContent = wn.updated_at || '';
+      document.getElementById('wNewsSummary').textContent = wn.summary_km || '';
+      const bEl = document.getElementById('wNewsLevelBadge');
+      bEl.textContent = wn.level || 'LOW';
+      bEl.className = wn.level === 'HIGH'
+        ? 'text-[10px] px-2 py-0.5 rounded-full bg-rose-500 text-white font-black'
+        : wn.level === 'MEDIUM'
+        ? 'text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-400/35'
+        : wn.level === 'COOLING'
+        ? 'text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold border border-sky-400/30'
+        : 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-bold border border-emerald-500/25';
+
+      const listEl = document.getElementById('wNewsList');
+      const items = wn.headlines || [];
+      if (!items.length) {
+        listEl.innerHTML = '<div class="text-[11px] text-gray-500">គ្មានព័ត៌មានសង្គ្រាម ឬជម្លោះបន្ទាន់ក្នុងពេលនេះទេ។</div>';
+        return;
+      }
+      listEl.innerHTML = items.map(it => {
+        const tagCls = it.severity === 'ESCALATION'
+          ? 'bg-rose-500/20 text-rose-300 border-rose-500/35'
+          : it.severity === 'PEACE/COOL'
+          ? 'bg-sky-500/15 text-sky-300 border-sky-400/30'
+          : 'bg-amber-500/15 text-amber-300 border-amber-400/30';
+        const linkOpen = it.link ? `<a href="${escHtml(it.link)}" target="_blank" rel="noopener noreferrer" class="hover:text-yellow-300 transition">` : '<span>';
+        const linkClose = it.link ? '</a>' : '</span>';
+        return `
+          <div class="flex items-start justify-between gap-2 bg-black/30 border border-white/5 rounded-xl px-2.5 py-2">
+            <div class="min-w-0 flex-1">
+              <div class="text-[11px] text-gray-100 leading-snug">${linkOpen}${escHtml(it.title)}${linkClose}</div>
+              <div class="text-[9.5px] text-gray-500 mt-0.5">${escHtml(it.source)}</div>
+            </div>
+            <span class="shrink-0 text-[9px] px-1.5 py-0.5 rounded font-bold border ${tagCls}">${escHtml(it.severity)}</span>
+          </div>`;
+      }).join('');
+    }
+
     // ==================== DATA RENDERERS ====================
     function renderNews(news) {
       if (!news) return;
@@ -1062,12 +1958,14 @@
       }
       lastPrice = price;
       updateAxisLivePill(price, dir);
+      updateHudProgress(price);
       checkPriceAlerts(price);
+      updateTpSlLiveTick(price);
 
       if (typeof change === 'number' && !isNaN(change)) {
         const sign = change >= 0 ? '+' : '';
         domPriceChange.textContent = `${sign}${change.toFixed(2)} (${sign}${(changePct || 0).toFixed(2)}%)`;
-        domPriceChange.className = `text-[11px] sm:text-xs font-semibold tabular-nums ${change >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+        domPriceChange.className = `text-[10.5px] sm:text-xs font-semibold tabular-nums ${change >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
       }
     }
 
@@ -1210,8 +2108,8 @@
       const fb = document.getElementById('feedBadge');
       fb.textContent = isForexCalibrated ? 'FOREX' : (data.is_spot ? 'SPOT' : 'FUTURES');
       fb.className = isForexCalibrated
-        ? 'hidden sm:inline-block text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/25 shrink-0'
-        : 'hidden sm:inline-block text-[9px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 font-bold border border-sky-500/25 shrink-0';
+        ? 'hidden md:inline-block text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/25 shrink-0'
+        : 'hidden md:inline-block text-[9px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 font-bold border border-sky-500/25 shrink-0';
 
       if (data.session?.name) document.getElementById('sessionText').textContent = data.session.name;
       candleCount = data.candles.length;
@@ -1231,25 +2129,18 @@
       else if (data.signal.includes('SELL')) { sigEl.className = 'mt-1 text-base sm:text-lg font-black text-rose-400'; bar.className = 'h-full bg-rose-400 transition-all duration-500'; }
       else { sigEl.className = 'mt-1 text-base sm:text-lg font-black text-yellow-400'; bar.className = 'h-full bg-yellow-400 transition-all duration-500'; }
 
-      const activeSide = data.active_signal?.side || (data.signal.includes('BUY') ? 'BUY' : data.signal.includes('SELL') ? 'SELL' : 'WAIT');
-      const hudSide = document.getElementById('hudSide');
-      hudSide.textContent = activeSide;
-      hudSide.className = activeSide === 'BUY' ? 'font-black text-emerald-400' : activeSide === 'SELL' ? 'font-black text-rose-400' : 'font-black text-yellow-400';
-      document.getElementById('hudEntry').textContent = `$${data.setup.entry.toFixed(2)}`;
-      document.getElementById('hudSl').textContent = `$${data.setup.sl.toFixed(2)}`;
-      document.getElementById('hudTp').textContent = `$${data.setup.tp1.toFixed(2)}`;
-      document.getElementById('hudRr').textContent = data.setup.rr;
-
       document.getElementById('rsiVal').textContent = data.rsi;
       document.getElementById('atrVal').textContent = `ATR: $${data.atr}`;
       document.getElementById('supportVal').textContent = `$${data.support}`;
       document.getElementById('resistanceVal').textContent = `$${data.resistance}`;
-      document.getElementById('slVal').textContent = `$${data.setup.sl}`;
-      document.getElementById('tp1Val').textContent = `$${data.setup.tp1}`;
-      document.getElementById('tp2Val').textContent = `$${data.setup.tp2}`;
-      document.getElementById('rrVal').textContent = `R:R ${data.setup.rr}`;
 
-      currentSlDist = data.setup.sl_dist || Math.abs(data.price - data.setup.sl) || 4.0;
+      const usePlan = data.brain?.plan || data.setup;
+      document.getElementById('slVal').textContent = `$${Number(usePlan.sl).toFixed(2)}`;
+      document.getElementById('tp1Val').textContent = `$${Number(usePlan.tp || usePlan.tp1).toFixed(2)}`;
+      document.getElementById('tp2Val').textContent = `$${Number(usePlan.tp2 || data.setup.tp2).toFixed(2)}`;
+      document.getElementById('rrVal').textContent = `R:R ${usePlan.rr || data.setup.rr}`;
+
+      currentSlDist = usePlan.sl_dist || Math.abs(data.price - usePlan.sl) || 4.0;
       updateLotCalc();
 
       document.getElementById('reasonsList').innerHTML = (data.reasons || []).map(r => `<li>${escHtml(r)}</li>`).join('');
@@ -1264,6 +2155,7 @@
 
       if (data.mtf) renderMTF(data.mtf);
       if (data.news) renderNews(data.news);
+      if (data.brain) renderBrainV8(data.brain);
       if (data.inst_levels) {
         lastInstData = data.inst_levels;
         document.getElementById('pdhVal').textContent = lastInstData.pdh ? `$${lastInstData.pdh}` : '--';
@@ -1275,6 +2167,9 @@
       lastSetupData = data.setup;
       lastChartSignals = data.chart_signals || [];
       lastZones = data.zones || null;
+      lastSmc = data.smc || null;
+
+      updatePrecisionHud(data);
 
       try {
         candleSeries.setData(data.candles);
@@ -1383,7 +2278,7 @@
     function renderQuestionList(list) {
       const c = document.getElementById('questionList');
       if (!list.length) {
-        c.innerHTML = '<div class="px-3.5 py-3 text-[11px] text-amber-300">មិនមានសំណួរត្រូវគ្នាក្នុងប្រព័ន្ធទេ។ សូមលុបអក្សរចេញ ដើម្បីមើលបញ្ជីសំណួរទាំង ១០។</div>';
+        c.innerHTML = '<div class="px-3.5 py-3 text-[11px] text-amber-300">មិនមានសំណួរត្រូវគ្នាក្នុងប្រព័ន្ធទេ។ សូមលុបអក្សរចេញ ដើម្បីមើលបញ្ជីសំណួរទាំង ១១។</div>';
         return;
       }
       c.innerHTML = list.map(q => `
@@ -1432,7 +2327,7 @@
     function renderChatHistory() {
       const box = document.getElementById('aiMessages');
       if (!chatHistory.length) {
-        box.innerHTML = `<div class="bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm p-3.5 text-gray-200 space-y-1"><div class="text-yellow-400 font-bold text-xs">TRI PISAL AI រួចរាល់សម្រាប់វិភាគ</div><p class="text-xs text-gray-300">ចុចលើប្រអប់ខាងក្រោម ដើម្បីជ្រើសរើសសំណួរវិភាគទាំង ១០ មុខ (MTF, USD News, PDH/PDL, Entry និង SL/TP)។</p></div>`;
+        box.innerHTML = `<div class="bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm p-3.5 text-gray-200 space-y-1"><div class="text-yellow-400 font-bold text-xs">TRI PISAL AI V8 រួចរាល់សម្រាប់វិភាគ</div><p class="text-xs text-gray-300">ចុចលើប្រអប់ខាងក្រោម ដើម្បីជ្រើសរើសសំណួរវិភាគទាំង ១១ មុខ (AI V8, ព័ត៌មានសង្គ្រាម &amp; មាសពិភពលោក, MTF, PDH/PDL, Entry និង SL/TP)។</p></div>`;
         return;
       }
       box.innerHTML = chatHistory.map(item => {
@@ -1452,10 +2347,10 @@
       const box = document.getElementById('aiMessages');
       const ld = document.createElement('div');
       ld.className = 'mr-6 bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm p-3 text-yellow-300 text-xs';
-      ld.textContent = 'កំពុងវិភាគ MTF, ព័ត៌មាន USD និងទិន្នន័យជាក់ស្តែង...';
+      ld.textContent = 'កំពុងវិភាគខួរក្បាល V8, SMC, ព័ត៌មានសង្គ្រាម និងទិន្នន័យជាក់ស្តែង...';
       box.appendChild(ld); box.scrollTop = box.scrollHeight;
 
-      const ctrl = new AbortController(), tid = setTimeout(() => ctrl.abort(), 12000);
+      const ctrl = new AbortController(), tid = setTimeout(() => ctrl.abort(), 14000);
       try {
         const res = await fetch('/api/ai-chat', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1477,10 +2372,12 @@
     document.getElementById('chkSlTp').checked = uiPrefs.showSlTp;
     document.getElementById('toggleInstBtn').textContent = `PDH/Asian: ${uiPrefs.showInst ? 'ON' : 'OFF'}`;
     toggleAISection(uiPrefs.showAI, false);
+    applyHudCollapseState();
 
     setActiveTfButton(currentInterval);
     renderChatHistory();
     renderAlerts();
+    renderTpSlSlotBar();
     renderJournal();
     updateLotCalc();
     connectWebSocket();
