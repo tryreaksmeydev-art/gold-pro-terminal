@@ -3,7 +3,7 @@ import math
 import time
 import asyncio
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
@@ -13,7 +13,7 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -22,12 +22,12 @@ http_session = requests.Session()
 adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=1)
 http_session.mount("https://", adapter)
 http_session.mount("http://", adapter)
-http_session.headers.update({"User-Agent": "GoldProTerminal/4.1"})
+http_session.headers.update({"User-Agent": "TriPisalGoldTerminal/6.1"})
 
 OANDA_API_KEY = os.getenv("OANDA_API_KEY", "").strip()
 TWELVE_DATA_KEY = os.getenv("TWELVE_DATA_API_KEY", "").strip()
 
-VALID_INTERVALS = ("5m", "15m", "1h", "4h", "1d")
+VALID_INTERVALS = ("1m", "5m", "15m", "1h", "4h", "1d")
 ALLOWED_PRESETS = {
     "entry", "risk_plan", "deep_scan", "mtf_check",
     "news_check", "inst_levels", "trend", "pattern", "volatility", "summary"
@@ -35,7 +35,7 @@ ALLOWED_PRESETS = {
 
 class ChatRequest(BaseModel):
     message: str
-    interval: str = "15m"
+    interval: str = "5m"
     preset: str | None = None
 
 # ==================== THREAD-SAFE CACHE WITH STALE FALLBACK ====================
@@ -71,14 +71,15 @@ class SafeCache:
                     with self._lock:
                         self._data[key] = (time.monotonic(), value)
                     return value
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[CACHE:{key}] fetch error: {e}")
             with self._lock:
                 entry = self._data.get(key)
                 return entry[1] if entry else None
 
 cache = SafeCache()
-mtf_executor = ThreadPoolExecutor(max_workers=4)
+# កំណត់ 2 workers ដើម្បីសន្សំ CPU/RAM លើ Render Free (0.1 CPU / 512 MB RAM)
+mtf_executor = ThreadPoolExecutor(max_workers=2)
 
 def safe_float(val, default: float = 0.0, digits: int = 2) -> float:
     try:
@@ -112,32 +113,136 @@ class ConnectionManager:
         async with self._lock:
             return len(self.clients)
 
+    async def safe_send(self, ws: WebSocket, payload: dict, timeout: float = 3.0) -> bool:
+        try:
+            await asyncio.wait_for(ws.send_json(payload), timeout=timeout)
+            return True
+        except Exception:
+            await self.disconnect(ws)
+            return False
+
 manager = ConnectionManager()
 
-# ==================== MARKET DATA FETCHERS ====================
-def _fetch_gold_raw(interval: str) -> tuple[pd.DataFrame, str, bool] | None:
-    # 1. OANDA Spot (បើមាន API Key)
+# ==================== REAL FOREX SPOT XAU/USD QUOTE ENGINE ====================
+def _fetch_swissquote_xau() -> dict | None:
+    """
+    ទាញតម្លៃមាស Forex Spot XAU/USD ផ្ទាល់ពីធនាគារ Swissquote (ឥតគិតថ្លៃ មិនបាច់ API Key)
+    """
+    try:
+        url = "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD"
+        res = http_session.get(url, timeout=(2.5, 3.5))
+        if res.status_code == 200:
+            data = res.json()
+            if isinstance(data, list) and data:
+                best = None
+                for item in data:
+                    prices = item.get("spreadProfilePrices") or []
+                    for sp in prices:
+                        bid = safe_float(sp.get("bid"), 0.0)
+                        ask = safe_float(sp.get("ask"), 0.0)
+                        if bid > 1000 and ask > 1000:
+                            if sp.get("spreadProfile", "").lower() in ("standard", "prime"):
+                                best = (bid, ask)
+                                break
+                            if best is None:
+                                best = (bid, ask)
+                    if best:
+                        break
+                if best:
+                    bid, ask = best
+                    return {
+                        "price": safe_float((bid + ask) / 2),
+                        "bid": bid,
+                        "ask": ask,
+                        "spread": safe_float(max(0.0, ask - bid)),
+                        "is_forex": True,
+                        "feed": "Forex Spot Live • XAU/USD"
+                    }
+    except Exception:
+        pass
+    return None
+
+def _fetch_live_quote_raw() -> dict | None:
     if OANDA_API_KEY:
         try:
-            gran = {"5m": "M5", "15m": "M15", "1h": "H1", "4h": "H4", "1d": "D"}.get(interval, "M15")
+            url = "https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles?granularity=S5&count=1&price=BA"
+            res = http_session.get(url, headers={"Authorization": f"Bearer {OANDA_API_KEY}"}, timeout=(2.5, 3.5)).json()
+            if "candles" in res and res["candles"]:
+                c = res["candles"][-1]
+                bid, ask = safe_float(c["bid"]["c"]), safe_float(c["ask"]["c"])
+                if bid > 0 and ask > 0:
+                    return {
+                        "price": safe_float((bid + ask) / 2), "bid": bid, "ask": ask,
+                        "spread": safe_float(max(0.0, ask - bid)), "is_forex": True, "feed": "OANDA Spot • XAU/USD"
+                    }
+        except Exception:
+            pass
+
+    sq = _fetch_swissquote_xau()
+    if sq:
+        return sq
+
+    if TWELVE_DATA_KEY:
+        try:
+            url = f"https://api.twelvedata.com/price?symbol=XAU/USD&apikey={TWELVE_DATA_KEY}"
+            res = http_session.get(url, timeout=(2.5, 3.5)).json()
+            if "price" in res:
+                p = safe_float(res["price"])
+                if p > 0:
+                    return {"price": p, "bid": p, "ask": safe_float(p + 0.25), "spread": 0.25, "is_forex": True, "feed": "Twelve Data • XAU/USD"}
+        except Exception:
+            pass
+
+    try:
+        url = "https://data-api.binance.vision/api/v3/ticker/bookTicker?symbol=PAXGUSDT"
+        res = http_session.get(url, timeout=(2.5, 3.5))
+        if res.status_code == 200:
+            d = res.json()
+            bid, ask = safe_float(d.get("bidPrice")), safe_float(d.get("askPrice"))
+            if bid > 0 and ask > 0:
+                return {"price": safe_float((bid + ask) / 2), "bid": bid, "ask": ask, "spread": safe_float(max(0.0, ask - bid)), "is_forex": False, "feed": "PAXG/USD"}
+    except Exception:
+        pass
+
+    try:
+        url = "https://www.okx.com/api/v5/market/ticker?instId=XAUT-USDT"
+        res = http_session.get(url, timeout=(2.5, 3.5))
+        if res.status_code == 200:
+            data = res.json().get("data", [])
+            if data:
+                bid, ask = safe_float(data[0].get("bidPx")), safe_float(data[0].get("askPx"))
+                if bid > 0 and ask > 0:
+                    return {"price": safe_float((bid + ask) / 2), "bid": bid, "ask": ask, "spread": safe_float(max(0.0, ask - bid)), "is_forex": False, "feed": "XAUT/USD"}
+    except Exception:
+        pass
+    return None
+
+def fetch_live_quote() -> dict | None:
+    # ទាញរៀងរាល់ 2.0s ដើម្បីការពារការ Block លើ Render Free (ទូរស័ព្ទរត់ Turbo WebSocket ផ្ទាល់)
+    return cache.get_or_fetch("live_quote", 2.0, _fetch_live_quote_raw)
+
+# ==================== CANDLE DATA FETCHERS ====================
+def _fetch_gold_raw(interval: str) -> tuple[pd.DataFrame, str, bool, str] | None:
+    if OANDA_API_KEY:
+        try:
+            gran = {"1m": "M1", "5m": "M5", "15m": "M15", "1h": "H1", "4h": "H4", "1d": "D"}.get(interval, "M5")
             url = f"https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles?granularity={gran}&count=150&price=M"
-            res = http_session.get(url, headers={"Authorization": f"Bearer {OANDA_API_KEY}"}, timeout=8).json()
+            res = http_session.get(url, headers={"Authorization": f"Bearer {OANDA_API_KEY}"}, timeout=(3, 5)).json()
             if "candles" in res and len(res["candles"]) > 5:
                 rows = [{
                     "datetime": pd.to_datetime(c["time"], utc=True),
                     "open": float(c["mid"]["o"]), "high": float(c["mid"]["h"]),
                     "low": float(c["mid"]["l"]), "close": float(c["mid"]["c"]),
                 } for c in res["candles"]]
-                return pd.DataFrame(rows), "OANDA Spot • XAU/USD", True
+                return pd.DataFrame(rows), "OANDA Spot • XAU/USD", True, "OANDA"
         except Exception as e:
             print(f"[OANDA] {e}")
 
-    # 2. Twelve Data Spot (បើមាន API Key)
     if TWELVE_DATA_KEY:
         try:
-            td_int = {"5m": "5min", "15m": "15min", "1h": "1h", "4h": "4h", "1d": "1day"}.get(interval, "15min")
+            td_int = {"1m": "1min", "5m": "5min", "15m": "15min", "1h": "1h", "4h": "4h", "1d": "1day"}.get(interval, "5min")
             url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval={td_int}&outputsize=150&apikey={TWELVE_DATA_KEY}"
-            res = http_session.get(url, timeout=8).json()
+            res = http_session.get(url, timeout=(3, 5)).json()
             if "values" in res and len(res["values"]) > 5:
                 df = pd.DataFrame(res["values"])
                 df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
@@ -145,15 +250,14 @@ def _fetch_gold_raw(interval: str) -> tuple[pd.DataFrame, str, bool] | None:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
                 df = df.dropna().sort_values("datetime").reset_index(drop=True)
                 if len(df) > 5:
-                    return df, "Twelve Data Spot • XAU/USD", True
+                    return df, "Twelve Data Spot • XAU/USD", True, "TWELVE"
         except Exception as e:
             print(f"[TwelveData] {e}")
 
-    # 3. Binance Vision Spot Gold (PAXG/USDT — ឥតគិតថ្លៃ)
     try:
-        bn_int = {"5m": "5m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d"}.get(interval, "15m")
+        bn_int = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d"}.get(interval, "5m")
         url = f"https://data-api.binance.vision/api/v3/klines?symbol=PAXGUSDT&interval={bn_int}&limit=150"
-        res = http_session.get(url, timeout=6)
+        res = http_session.get(url, timeout=(3, 5))
         if res.status_code == 200:
             raw = res.json()
             if isinstance(raw, list) and len(raw) > 5:
@@ -162,15 +266,14 @@ def _fetch_gold_raw(interval: str) -> tuple[pd.DataFrame, str, bool] | None:
                     "open": float(k[1]), "high": float(k[2]),
                     "low": float(k[3]), "close": float(k[4]),
                 } for k in raw]
-                return pd.DataFrame(rows), "Gold Spot Live • PAXG/USD", True
+                return pd.DataFrame(rows), "Gold Spot Live • PAXG/USD", True, "PAXG"
     except Exception as e:
         print(f"[Binance] {e}")
 
-    # 4. OKX Spot Gold Fallback (XAUT-USDT — ដើរលឿនលើ Render Singapore)
     try:
-        okx_bar = {"5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1Dutc"}.get(interval, "15m")
+        okx_bar = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1Dutc"}.get(interval, "5m")
         url = f"https://www.okx.com/api/v5/market/candles?instId=XAUT-USDT&bar={okx_bar}&limit=150"
-        res = http_session.get(url, timeout=6)
+        res = http_session.get(url, timeout=(3, 5))
         if res.status_code == 200:
             raw = res.json().get("data", [])
             if isinstance(raw, list) and len(raw) > 5:
@@ -180,104 +283,48 @@ def _fetch_gold_raw(interval: str) -> tuple[pd.DataFrame, str, bool] | None:
                     "low": float(k[3]), "close": float(k[4]),
                 } for k in raw]
                 df = pd.DataFrame(rows).sort_values("datetime").reset_index(drop=True)
-                return df, "Gold Spot Live • XAUT/USD", True
+                return df, "Gold Spot Live • XAUT/USD", True, "XAUT"
     except Exception as e:
         print(f"[OKX] {e}")
 
-    # 5. Yahoo Finance Fallback
     try:
         ticker = yf.Ticker("GC=F")
         if interval == "4h":
             df = ticker.history(period="1mo", interval="1h")
             if df is not None and not df.empty:
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
                 df = df.resample("4h").agg({
                     "Open": "first", "High": "max", "Low": "min", "Close": "last"
                 }).dropna()
         else:
-            period = {"5m": "5d", "15m": "5d", "1h": "1mo", "1d": "6mo"}.get(interval, "5d")
+            period = {"1m": "1d", "5m": "5d", "15m": "5d", "1h": "1mo", "1d": "6mo"}.get(interval, "5d")
             df = ticker.history(period=period, interval=interval)
 
         if df is not None and not df.empty:
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
             df = df.reset_index()
-            tcol = "Datetime" if "Datetime" in df.columns else "Date"
+            tcol = "Datetime" if "Datetime" in df.columns else ("Date" if "Date" in df.columns else df.columns[0])
             df = df.rename(columns={tcol: "datetime", "Open": "open", "High": "high", "Low": "low", "Close": "close"})
             df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
             df = df[["datetime", "open", "high", "low", "close"]].dropna().tail(150).reset_index(drop=True)
             if len(df) > 5:
-                return df, "Yahoo Futures • GC=F", False
+                return df, "Yahoo Futures • GC=F", False, "YAHOO"
     except Exception as e:
         print(f"[Yahoo] {e}")
     return None
 
-def fetch_gold_data(interval: str = "15m") -> tuple[pd.DataFrame, str, bool]:
-    ttl = 45.0 if (TWELVE_DATA_KEY and not OANDA_API_KEY) else 20.0
+def fetch_gold_data(interval: str = "5m") -> tuple[pd.DataFrame, str, bool, str]:
+    ttl = 45.0 if (TWELVE_DATA_KEY and not OANDA_API_KEY) else (10.0 if interval == "1m" else 18.0)
     res = cache.get_or_fetch(f"gold_{interval}", ttl, lambda: _fetch_gold_raw(interval))
     if res is None:
-        return pd.DataFrame(), "Reconnecting...", False
+        return pd.DataFrame(), "Reconnecting...", False, ""
     return res
-
-def _fetch_live_quote_raw() -> dict | None:
-    if OANDA_API_KEY:
-        try:
-            url = "https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles?granularity=S5&count=1&price=BA"
-            res = http_session.get(url, headers={"Authorization": f"Bearer {OANDA_API_KEY}"}, timeout=4).json()
-            if "candles" in res and res["candles"]:
-                c = res["candles"][-1]
-                bid, ask = safe_float(c["bid"]["c"]), safe_float(c["ask"]["c"])
-                return {"price": safe_float((bid + ask) / 2), "bid": bid, "ask": ask, "spread": safe_float(ask - bid)}
-        except Exception:
-            pass
-
-    if TWELVE_DATA_KEY:
-        try:
-            url = f"https://api.twelvedata.com/price?symbol=XAU/USD&apikey={TWELVE_DATA_KEY}"
-            res = http_session.get(url, timeout=4).json()
-            if "price" in res:
-                p = safe_float(res["price"])
-                if p > 0:
-                    return {"price": p, "bid": p, "ask": safe_float(p + 0.25), "spread": 0.25}
-        except Exception:
-            pass
-
-    try:
-        url = "https://data-api.binance.vision/api/v3/ticker/bookTicker?symbol=PAXGUSDT"
-        res = http_session.get(url, timeout=4)
-        if res.status_code == 200:
-            d = res.json()
-            bid, ask = safe_float(d.get("bidPrice")), safe_float(d.get("askPrice"))
-            if bid > 0 and ask > 0:
-                return {"price": safe_float((bid + ask) / 2), "bid": bid, "ask": ask, "spread": safe_float(ask - bid)}
-    except Exception:
-        pass
-
-    try:
-        url = "https://www.okx.com/api/v5/market/ticker?instId=XAUT-USDT"
-        res = http_session.get(url, timeout=4)
-        if res.status_code == 200:
-            data = res.json().get("data", [])
-            if data:
-                bid = safe_float(data[0].get("bidPx"))
-                ask = safe_float(data[0].get("askPx"))
-                if bid > 0 and ask > 0:
-                    return {"price": safe_float((bid + ask) / 2), "bid": bid, "ask": ask, "spread": safe_float(ask - bid)}
-    except Exception:
-        pass
-
-    try:
-        p = safe_float(yf.Ticker("GC=F").fast_info.get("lastPrice"), 0.0)
-        if p > 0:
-            return {"price": p, "bid": p, "ask": safe_float(p + 0.30), "spread": 0.30}
-    except Exception:
-        pass
-    return None
-
-def fetch_live_quote() -> dict | None:
-    ttl = 12.0 if (TWELVE_DATA_KEY and not OANDA_API_KEY) else 1.2
-    return cache.get_or_fetch("live_quote", ttl, _fetch_live_quote_raw)
 
 def _fetch_usd_news_raw() -> dict:
     url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-    res = http_session.get(url, timeout=5)
+    res = http_session.get(url, timeout=(3, 5))
     res.raise_for_status()
     events = res.json()
     now_utc = datetime.now(timezone.utc)
@@ -325,8 +372,8 @@ def generate_chart_signals(df: pd.DataFrame) -> tuple[list[dict], dict | None, d
     high = df["high"].to_numpy(dtype=float)
     low = df["low"].to_numpy(dtype=float)
     close = df["close"].to_numpy(dtype=float)
-    atr = df["atr"].to_numpy(dtype=float)
-    rsi = df["rsi"].to_numpy(dtype=float)
+    atr = np.nan_to_num(df["atr"].to_numpy(dtype=float), nan=1.0, posinf=1.0, neginf=1.0)
+    rsi = np.nan_to_num(df["rsi"].to_numpy(dtype=float), nan=50.0, posinf=50.0, neginf=50.0)
     timestamps = [int(pd.Timestamp(t).timestamp()) for t in df["datetime"]]
 
     mult = 1.45
@@ -357,7 +404,7 @@ def generate_chart_signals(df: pd.DataFrame) -> tuple[list[dict], dict | None, d
 
     for i in range(14, n):
         ts = timestamps[i]
-        cur_atr = max(float(atr[i]), 1.0)
+        cur_atr = max(float(atr[i]), 0.8)
 
         if i >= 18:
             if high[i - 2] == np.max(high[i - 4:i + 1]):
@@ -365,6 +412,7 @@ def generate_chart_signals(df: pd.DataFrame) -> tuple[list[dict], dict | None, d
             if low[i - 2] == np.min(low[i - 4:i + 1]):
                 last_swing_low = float(low[i - 2])
 
+        bar_range = max(high[i] - low[i], 0.01)
         is_st_buy = (direction[i] == 1 and direction[i - 1] == -1)
         is_rev_buy = (
             i - last_sig_idx >= 5
@@ -372,7 +420,7 @@ def generate_chart_signals(df: pd.DataFrame) -> tuple[list[dict], dict | None, d
             and rsi[i] < 40
             and low[i] <= np.min(low[max(0, i - 8):i + 1]) * 1.0003
             and close[i] > open_p[i]
-            and (close[i] - low[i]) > (high[i] - low[i]) * 0.55
+            and (close[i] - low[i]) > bar_range * 0.55
         )
 
         is_st_sell = (direction[i] == -1 and direction[i - 1] == 1)
@@ -382,13 +430,13 @@ def generate_chart_signals(df: pd.DataFrame) -> tuple[list[dict], dict | None, d
             and rsi[i] > 60
             and high[i] >= np.max(high[max(0, i - 8):i + 1]) * 0.9997
             and close[i] < open_p[i]
-            and (high[i] - close[i]) > (high[i] - low[i]) * 0.55
+            and (high[i] - close[i]) > bar_range * 0.55
         )
 
         if (is_st_buy or is_rev_buy) and (i - last_sig_idx >= 3):
             entry_p = safe_float(close[i])
             sl_p = safe_float(min(low[i] - cur_atr * 0.7, entry_p - cur_atr * 1.3))
-            risk = max(entry_p - sl_p, 1.0)
+            risk = max(entry_p - sl_p, 0.8)
             tp1_p = safe_float(entry_p + risk * 2.0)
             tp2_p = safe_float(entry_p + risk * 3.0)
             signals.append({
@@ -406,7 +454,7 @@ def generate_chart_signals(df: pd.DataFrame) -> tuple[list[dict], dict | None, d
         if (is_st_sell or is_rev_sell) and (i - last_sig_idx >= 3):
             entry_p = safe_float(close[i])
             sl_p = safe_float(max(high[i] + cur_atr * 0.7, entry_p + cur_atr * 1.3))
-            risk = max(sl_p - entry_p, 1.0)
+            risk = max(sl_p - entry_p, 0.8)
             tp1_p = safe_float(entry_p - risk * 2.0)
             tp2_p = safe_float(entry_p - risk * 3.0)
             signals.append({
@@ -453,7 +501,7 @@ def generate_chart_signals(df: pd.DataFrame) -> tuple[list[dict], dict | None, d
     rec_high = high[-lookback:]
     rec_open = open_p[-lookback:]
     rec_close = close[-lookback:]
-    last_atr = max(float(atr[-1]), 1.2)
+    last_atr = max(float(atr[-1]), 1.0)
 
     low_idx = int(np.argmin(rec_low))
     demand_bottom = safe_float(rec_low[low_idx])
@@ -507,7 +555,10 @@ def _compute_mtf_raw() -> dict:
     futures = {code: mtf_executor.submit(fetch_gold_data, code) for code, _ in tfs}
     items, buy_cnt, sell_cnt = {}, 0, 0
     for code, label in tfs:
-        df, _, _ = futures[code].result()
+        try:
+            df, _, _, _ = futures[code].result(timeout=10)
+        except (FuturesTimeout, Exception):
+            df = pd.DataFrame()
         res = compute_tf_bias(df)
         items[code] = {"label": label, "bias": res["bias"], "rsi": res["rsi"]}
         buy_cnt += 1 if res["bias"] == "BUY" else 0
@@ -543,26 +594,32 @@ def get_mtf_confluence() -> dict:
 
 def _compute_inst_levels_raw() -> dict:
     pdh = pdl = asian_high = asian_low = None
-    df_d, _, _ = fetch_gold_data("1d")
+    df_d, _, _, _ = fetch_gold_data("1d")
     if len(df_d) >= 2:
         pdh = safe_float(df_d.iloc[-2]["high"], 0.0) or None
         pdl = safe_float(df_d.iloc[-2]["low"], 0.0) or None
 
-    df_15m, _, _ = fetch_gold_data("15m")
+    df_15m, _, _, _ = fetch_gold_data("15m")
     if not df_15m.empty:
         dts = pd.to_datetime(df_15m["datetime"], utc=True)
         asian_df = df_15m[(dts.dt.hour >= 0) & (dts.dt.hour < 7)]
         if not asian_df.empty:
-            latest_date = pd.to_datetime(asian_df["datetime"], utc=True).dt.date.max()
-            day_asian = asian_df[pd.to_datetime(asian_df["datetime"], utc=True).dt.date == latest_date]
+            asian_dts = pd.to_datetime(asian_df["datetime"], utc=True)
+            latest_date = asian_dts.dt.date.max()
+            day_asian = asian_df[asian_dts.dt.date == latest_date]
             if not day_asian.empty:
                 asian_high = safe_float(day_asian["high"].max(), 0.0) or None
                 asian_low = safe_float(day_asian["low"].min(), 0.0) or None
     return {"pdh": pdh, "pdl": pdl, "asian_high": asian_high, "asian_low": asian_low}
 
-def get_institutional_levels() -> dict:
-    res = cache.get_or_fetch("inst_levels", 60.0, _compute_inst_levels_raw)
-    return res or {"pdh": None, "pdl": None, "asian_high": None, "asian_low": None}
+def get_institutional_levels(basis: float = 0.0) -> dict:
+    raw = cache.get_or_fetch("inst_levels_raw", 60.0, _compute_inst_levels_raw)
+    if not raw:
+        return {"pdh": None, "pdl": None, "asian_high": None, "asian_low": None}
+    return {
+        k: (safe_float(v + basis) if v is not None else None)
+        for k, v in raw.items()
+    }
 
 def detect_candle_pattern(df: pd.DataFrame) -> dict:
     if len(df) < 3:
@@ -591,6 +648,10 @@ def detect_candle_pattern(df: pd.DataFrame) -> dict:
 
 def calculate_indicators(df: pd.DataFrame) -> dict:
     df = df.copy()
+    for col in ("open", "high", "low", "close"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["open", "high", "low", "close"]).reset_index(drop=True)
+
     df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
     df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
 
@@ -616,7 +677,7 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
         (df["high"] - df["close"].shift()).abs(),
         (df["low"] - df["close"].shift()).abs()
     ], axis=1).max(axis=1)
-    df["atr"] = tr.rolling(window=10).mean().bfill()
+    df["atr"] = tr.rolling(window=10).mean().bfill().fillna(2.0)
 
     chart_signals, active_signal, zones = generate_chart_signals(df)
 
@@ -633,7 +694,7 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
     macd_hist = safe_float(latest["macd_hist"], 0.0, 3)
     bb_upper = safe_float(latest["bb_upper"], price)
     bb_lower = safe_float(latest["bb_lower"], price)
-    atr = max(safe_float(latest["atr"], 2.5), 1.0)
+    atr = max(safe_float(latest["atr"], 2.0), 0.8)
 
     recent = df.tail(30)
     support = safe_float(recent["low"].min(), price)
@@ -724,8 +785,8 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
             "open": safe_float(row["open"]), "high": safe_float(row["high"]),
             "low": safe_float(row["low"]), "close": safe_float(row["close"]),
         })
-        ema20_line.append({"time": ts, "value": safe_float(row["ema20"])})
-        ema50_line.append({"time": ts, "value": safe_float(row["ema50"])})
+        ema20_line.append({"time": ts, "value": safe_float(row["ema20"], price)})
+        ema50_line.append({"time": ts, "value": safe_float(row["ema50"], price)})
 
     return {
         "price": price, "change": change, "change_pct": change_pct,
@@ -744,14 +805,26 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
     }
 
 def build_full_payload_sync(interval: str, include_extras: bool = True) -> dict | None:
-    df, source, is_spot = fetch_gold_data(interval)
-    if df.empty:
-        print(f"[WARN] Empty dataframe for interval={interval}")
+    df, source, is_spot, raw_feed = fetch_gold_data(interval)
+    if df.empty or len(df) < 5:
         return None
     quote = fetch_live_quote()
-    if quote and quote["price"]:
+    df = df.copy()
+    basis = 0.0
+
+    # Auto-Calibrate ទៀនឲ្យត្រូវតម្លៃ Forex Spot XAU/USD ពិត (ដូច TradingView/MT5)
+    if quote and quote["price"] > 0:
         live_p = quote["price"]
-        df = df.copy()
+        raw_last = float(df.iloc[-1]["close"])
+        if quote.get("is_forex") and raw_feed not in ("OANDA", "TWELVE"):
+            cand_basis = live_p - raw_last
+            if abs(cand_basis) < 120:
+                basis = cand_basis
+                for col in ("open", "high", "low", "close"):
+                    df[col] = df[col] + basis
+            source = quote.get("feed", "Forex Spot Live • XAU/USD")
+            is_spot = True
+
         df.iloc[-1, df.columns.get_loc("close")] = live_p
         if live_p > df.iloc[-1]["high"]:
             df.iloc[-1, df.columns.get_loc("high")] = live_p
@@ -761,6 +834,9 @@ def build_full_payload_sync(interval: str, include_extras: bool = True) -> dict 
     payload = calculate_indicators(df)
     payload["source"] = source
     payload["is_spot"] = is_spot
+    payload["is_forex"] = bool(quote.get("is_forex")) if quote else False
+    payload["raw_feed"] = raw_feed
+    payload["basis_offset"] = safe_float(basis, 0.0, 4)
     payload["interval"] = interval
     payload["bid"] = quote["bid"] if quote else payload["price"]
     payload["ask"] = quote["ask"] if quote else safe_float(payload["price"] + 0.25)
@@ -768,63 +844,70 @@ def build_full_payload_sync(interval: str, include_extras: bool = True) -> dict 
     if include_extras:
         payload["mtf"] = get_mtf_confluence()
         payload["news"] = fetch_usd_news()
-        payload["inst_levels"] = get_institutional_levels()
+        payload["inst_levels"] = get_institutional_levels(basis)
     payload["type"] = "full"
     return payload
 
-# ==================== SHARED BACKGROUND BROADCASTER ====================
+# ==================== RENDER-SAFE HYBRID TURBO BROADCASTER ====================
 async def broadcast_loop():
     cycle = 0
     while True:
-        await asyncio.sleep(1.5)
-        if await manager.count() == 0:
-            continue
-        cycle += 1
-        clients = await manager.snapshot()
-        if not clients:
-            continue
+        try:
+            await asyncio.sleep(2.5)
+            if await manager.count() == 0:
+                continue
+            cycle += 1
+            clients = await manager.snapshot()
+            if not clients:
+                continue
 
-        if cycle % 20 == 0:
-            unique_tfs = set(tf for _, tf in clients)
-            tf_payloads = {}
-            for tf in unique_tfs:
-                tf_payloads[tf] = await asyncio.to_thread(build_full_payload_sync, tf, True)
-            for ws, tf in clients:
-                data = tf_payloads.get(tf)
-                if data:
-                    try:
-                        await ws.send_json(data)
-                    except Exception:
-                        await manager.disconnect(ws)
-            continue
+            # អាប់ដេតទៀន និងសញ្ញាពេញរៀងរាល់ ៣០ វិនាទី (12 * 2.5s)
+            if cycle % 12 == 0:
+                unique_tfs = set(tf for _, tf in clients)
+                tf_payloads = {}
+                for tf in unique_tfs:
+                    tf_payloads[tf] = await asyncio.to_thread(build_full_payload_sync, tf, True)
+                for ws, tf in clients:
+                    data = tf_payloads.get(tf)
+                    if data:
+                        await manager.safe_send(ws, data)
+                continue
 
-        quote = await asyncio.to_thread(fetch_live_quote)
-        if quote:
-            tick_msg = {
-                "type": "tick", "price": quote["price"], "bid": quote["bid"],
-                "ask": quote["ask"], "spread": quote["spread"], "ts": int(time.time())
-            }
-            for ws, _ in clients:
-                try:
-                    await ws.send_json(tick_msg)
-                except Exception:
-                    await manager.disconnect(ws)
+            # ផ្ញើតម្លៃ Forex Spot XAU/USD ពិតរៀងរាល់ 2.5s ដើម្បីតម្រឹម Offset លើទូរស័ព្ទ
+            quote = await asyncio.to_thread(fetch_live_quote)
+            if quote:
+                tick_msg = {
+                    "type": "tick",
+                    "price": quote["price"],
+                    "bid": quote["bid"],
+                    "ask": quote["ask"],
+                    "spread": quote["spread"],
+                    "is_forex": bool(quote.get("is_forex")),
+                    "ts": int(time.time())
+                }
+                for ws, _ in clients:
+                    await manager.safe_send(ws, tick_msg)
 
-        if cycle % 14 == 0:
-            for ws, _ in clients:
-                try:
-                    await ws.send_json({"type": "ping"})
-                except Exception:
-                    await manager.disconnect(ws)
+            if cycle % 10 == 0:
+                for ws, _ in clients:
+                    await manager.safe_send(ws, {"type": "ping"})
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"[BROADCAST] recovered from error: {e}")
+            await asyncio.sleep(2.0)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(broadcast_loop())
-    yield
-    task.cancel()
-    mtf_executor.shutdown(wait=False)
+    try:
+        yield
+    finally:
+        task.cancel()
+        mtf_executor.shutdown(wait=False)
+        http_session.close()
 
-app = FastAPI(title="Gold XAU/USD Pro Terminal", lifespan=lifespan)
+app = FastAPI(title="TRI PISAL • Gold XAU/USD Pro Terminal", lifespan=lifespan)
 
 # ==================== AI CHAT ENGINE ====================
 def generate_ai_reply(preset: str, data: dict, interval: str, mtf: dict, news: dict, inst: dict) -> dict:
@@ -954,8 +1037,12 @@ def generate_ai_reply(preset: str, data: dict, interval: str, mtf: dict, news: d
 def health_check():
     return {"status": "ok", "ts": int(time.time())}
 
+@app.get("/favicon.ico")
+def favicon():
+    return Response(status_code=204)
+
 @app.get("/api/gold")
-async def get_gold_rest(interval: str = Query("15m", pattern="^(5m|15m|1h|4h|1d)$")):
+async def get_gold_rest(interval: str = Query("5m", pattern="^(1m|5m|15m|1h|4h|1d)$")):
     payload = await asyncio.to_thread(build_full_payload_sync, interval, True)
     if not payload:
         return {"error": "កំពុងភ្ជាប់ទិន្នន័យមាសឡើងវិញ សូមរង់ចាំបន្តិច"}
@@ -973,7 +1060,7 @@ async def ai_chat(req: ChatRequest):
                 "សូមមេត្តាជ្រើសរើសសំណួរដែលមានស្រាប់ក្នុងបញ្ជីខាងក្រោម ដើម្បីទទួលបានការវិភាគជាក់ស្តែង និងសុក្រឹតបំផុត។"
             ]
         }
-    interval = req.interval if req.interval in VALID_INTERVALS else "15m"
+    interval = req.interval if req.interval in VALID_INTERVALS else "5m"
     payload = await asyncio.to_thread(build_full_payload_sync, interval, True)
     if not payload:
         return {"title": "ស្ថានភាពទិន្នន័យ", "badge": "RETRY", "lines": ["កំពុងទាញទិន្នន័យឡើងវិញ សូមសាកល្បងម្តងទៀត។"]}
@@ -981,23 +1068,25 @@ async def ai_chat(req: ChatRequest):
 
 @app.websocket("/ws/gold/{interval}")
 async def gold_websocket(websocket: WebSocket, interval: str):
-    tf = interval if interval in VALID_INTERVALS else "15m"
+    tf = interval if interval in VALID_INTERVALS else "5m"
     await manager.connect(websocket, tf)
     try:
-        # ១. ផ្ញើក្រាហ្វិក + BUY/SELL + Demand Zone ភ្លាមៗ (< 1 វិនាទី)
         fast_payload = await asyncio.to_thread(build_full_payload_sync, tf, False)
         if fast_payload:
-            await websocket.send_json(fast_payload)
+            ok = await manager.safe_send(websocket, fast_payload, timeout=5.0)
+            if not ok:
+                return
 
-        # ២. ផ្ញើ MTF + USD News + PDH/PDL តាមក្រោយ
         full_payload = await asyncio.to_thread(build_full_payload_sync, tf, True)
         if full_payload:
-            await websocket.send_json(full_payload)
+            ok = await manager.safe_send(websocket, full_payload, timeout=5.0)
+            if not ok:
+                return
 
         while True:
             await websocket.receive_text()
-    except (WebSocketDisconnect, Exception) as e:
-        print(f"[WS] Closed ({tf}): {e}")
+    except (WebSocketDisconnect, Exception):
+        pass
     finally:
         await manager.disconnect(websocket)
 

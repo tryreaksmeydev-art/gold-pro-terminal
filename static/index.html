@@ -3,45 +3,68 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>Gold XAU/USD Pro Terminal</title>
+  <meta name="theme-color" content="#070b13" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>TRI PISAL • Gold XAU/USD Pro Terminal</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
   <style>
     * { box-sizing: border-box; }
-    html, body {
+    html {
       background: #070b13;
-      color: #f3f4f6;
-      font-family: system-ui, -apple-system, 'Khmer OS Siemreap', sans-serif;
-      -webkit-tap-highlight-color: transparent;
-      overscroll-behavior-y: none;
+      -webkit-text-size-adjust: 100%;
+      scroll-behavior: smooth;
     }
     body {
-      background-image: radial-gradient(circle at 50% 0%, rgba(234, 179, 8, 0.08) 0%, rgba(7, 11, 19, 0) 55%);
-      padding-bottom: calc(2rem + env(safe-area-inset-bottom));
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      min-height: 100dvh;
+      overflow-x: clip;
+      overscroll-behavior-x: none;
+      background: #070b13;
+      background-image:
+        radial-gradient(circle at 50% 0%, rgba(250, 204, 21, 0.085) 0%, rgba(7, 11, 19, 0) 52%),
+        radial-gradient(circle at 85% 25%, rgba(56, 189, 248, 0.04) 0%, rgba(7, 11, 19, 0) 40%);
+      color: #f3f4f6;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Khmer OS Siemreap', sans-serif;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-font-smoothing: antialiased;
+      padding-bottom: calc(2.25rem + env(safe-area-inset-bottom));
     }
     .glass {
-      background: rgba(15, 23, 42, 0.8);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(13, 19, 34, 0.84);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(255, 255, 255, 0.075);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.28);
     }
     .tf-btn.active {
-      background: linear-gradient(135deg, #facc15, #ca8a04);
-      color: #080c14;
-      font-weight: 700;
-      box-shadow: 0 2px 10px rgba(234, 179, 8, 0.3);
+      background: linear-gradient(135deg, #fde047, #ca8a04);
+      color: #070b13;
+      font-weight: 800;
+      box-shadow: 0 2px 12px rgba(234, 179, 8, 0.35);
     }
-    @keyframes flashGreen { 0% { color: #00e5a8; } 100% { color: #f9fafb; } }
-    @keyframes flashRed { 0% { color: #ff5c7c; } 100% { color: #f9fafb; } }
-    @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
-    .tick-up { animation: flashGreen 0.35s ease-out; }
-    .tick-down { animation: flashRed 0.35s ease-out; }
+    .brand-text {
+      background: linear-gradient(135deg, #fef08a 0%, #facc15 45%, #d97706 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-4px); }
+      75% { transform: translateX(4px); }
+    }
     .input-shake { animation: shake 0.28s ease-in-out; }
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-    /* Fullscreen Mode (បញ្ឈរ និងផ្តេកលើ iPhone/Android/PC) */
+    /* អនុញ្ញាតឲ្យអូសឡើងចុះបានរលូនលើទូរស័ព្ទទោះប៉ះលើក្រាហ្វិក */
+    #chartStage { touch-action: pan-y; }
+
+    /* Fullscreen Mode (បញ្ឈរ និងផ្តេកលើ iPhone / Android / PC) */
     #chartCard.is-fullscreen {
       position: fixed;
       inset: 0;
@@ -55,55 +78,77 @@
       flex-direction: column;
       padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
     }
-    #chartCard.is-fullscreen #chartStage { flex: 1; height: 100%; }
+    #chartCard.is-fullscreen #chartStage { flex: 1; height: 100%; touch-action: none; }
     #chartCard.is-fullscreen #chart { height: 100% !important; }
 
-    /* Live Price + Countdown Pill លើអ័ក្សតម្លៃខាងស្តាំ */
+    /* GPU-Accelerated Live Price + Countdown Pill (0 Lag) */
     #axisLivePill {
       position: absolute;
+      top: 0;
       right: 0;
       z-index: 16;
       pointer-events: none;
-      min-width: 68px;
+      min-width: 72px;
       padding: 2px 6px;
       border-radius: 4px 0 0 4px;
       text-align: right;
       line-height: 1.15;
-      transform: translateY(-50%);
-      transition: top 0.12s linear, background-color 0.2s ease;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+      will-change: transform;
+      transition: background-color 0.08s linear;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
     }
   </style>
 </head>
-<body class="min-h-screen flex flex-col">
+<body class="flex flex-col">
 
-  <!-- Offline Banner -->
+  <!-- Offline Network Banner -->
   <div id="offlineBar" class="hidden bg-rose-600 text-white text-center text-[11px] font-semibold py-1.5 px-3">
     គ្មានការភ្ជាប់អ៊ីនធឺណិត — កំពុងបង្ហាញទិន្នន័យចុងក្រោយពីអង្គចងចាំទូរស័ព្ទ
   </div>
 
-  <!-- Sticky Header -->
-  <header class="sticky top-0 z-30 glass border-b border-white/10 px-4 py-3">
-    <div class="max-w-5xl mx-auto flex items-center justify-between">
-      <div>
-        <div class="flex items-center gap-2">
-          <span class="relative flex h-2 w-2">
-            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span id="wsDot" class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-          </span>
-          <h1 class="text-sm sm:text-base font-extrabold tracking-wide text-yellow-400">GOLD XAU/USD</h1>
-          <span id="wsStatus" class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-bold border border-emerald-500/20">LIVE</span>
-          <span id="feedBadge" class="hidden sm:inline-block text-[10px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 font-semibold border border-sky-500/20">--</span>
+  <!-- Sticky Enterprise Header with TRI PISAL Logo -->
+  <header class="sticky top-0 z-30 glass border-b border-white/10 px-3 sm:px-4 py-2.5">
+    <div class="max-w-5xl mx-auto flex items-center justify-between gap-2">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <!-- TRI PISAL Emblem -->
+        <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-yellow-300 via-amber-500 to-yellow-700 p-[1.5px] shadow-lg shadow-yellow-500/20 shrink-0">
+          <div class="w-full h-full rounded-[10px] bg-[#090e1a] flex items-center justify-center">
+            <svg viewBox="0 0 40 40" class="w-6 h-6 sm:w-7 sm:h-7" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="tpGold" x1="4" y1="4" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#FEF08A"/>
+                  <stop offset="0.5" stop-color="#FACC15"/>
+                  <stop offset="1" stop-color="#B45309"/>
+                </linearGradient>
+              </defs>
+              <polygon points="20,3 35,11.5 35,28.5 20,37 5,28.5 5,11.5" stroke="url(#tpGold)" stroke-width="2" fill="rgba(250,204,21,0.08)"/>
+              <text x="20" y="24.5" text-anchor="middle" fill="url(#tpGold)" font-family="system-ui, sans-serif" font-weight="900" font-size="14" letter-spacing="-0.5">TP</text>
+            </svg>
+          </div>
         </div>
-        <div class="flex items-center gap-1.5 mt-0.5 text-[11px] text-gray-400">
-          <i data-lucide="database" class="w-3 h-3 text-gray-500"></i>
-          <span id="dataSource">កំពុងភ្ជាប់ Real-time...</span>
+
+        <div class="min-w-0">
+          <div class="flex items-center gap-1.5">
+            <span class="text-xs sm:text-sm font-black tracking-wider brand-text truncate">TRI PISAL</span>
+            <span class="relative flex h-2 w-2 shrink-0">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span id="wsDot" class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span id="wsStatus" class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-bold border border-emerald-500/20 shrink-0">TURBO</span>
+            <span id="feedBadge" class="hidden sm:inline-block text-[9px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 font-semibold border border-sky-500/20 shrink-0">FOREX</span>
+          </div>
+          <div class="flex items-center gap-1 mt-0.5 text-[10px] sm:text-[11px] text-gray-400 truncate">
+            <span class="text-yellow-400/90 font-bold">XAU/USD</span>
+            <span>•</span>
+            <span id="dataSource" class="truncate">កំពុងភ្ជាប់ Turbo Real-time...</span>
+          </div>
         </div>
       </div>
-      <div class="text-right">
-        <div id="livePrice" class="text-xl sm:text-2xl font-black tracking-tight tabular-nums">----.--</div>
-        <div id="priceChange" class="text-xs font-semibold tabular-nums text-gray-400">--</div>
-        <div id="bidAskText" class="text-[10px] text-gray-400 tabular-nums mt-0.5">Bid -- • Ask --</div>
+
+      <div class="text-right shrink-0 min-w-[118px]">
+        <div id="livePrice" class="text-lg sm:text-2xl font-black tracking-tight tabular-nums text-white transition-colors duration-75">----.--</div>
+        <div id="priceChange" class="text-[11px] sm:text-xs font-semibold tabular-nums text-gray-400">--</div>
+        <div id="bidAskText" class="text-[9.5px] sm:text-[10px] text-gray-400 tabular-nums mt-0.5">Bid -- • Ask --</div>
       </div>
     </div>
   </header>
@@ -122,10 +167,10 @@
     </button>
   </div>
 
-  <!-- Main Workspace -->
+  <!-- Main Workspace (No overflow-x-hidden so mobile vertical scroll stays native & silky) -->
   <main class="flex-1 max-w-5xl w-full mx-auto px-3 sm:px-4 py-3 space-y-3">
 
-    <!-- USD High-Impact News Bar -->
+    <!-- USD High-Impact Economic News Bar -->
     <div id="newsBanner" class="glass rounded-2xl px-3.5 py-2.5 flex items-center justify-between gap-2 text-xs">
       <div class="flex items-center gap-2 min-w-0">
         <i data-lucide="calendar-clock" class="w-4 h-4 text-sky-400 shrink-0"></i>
@@ -134,14 +179,15 @@
       <span id="newsBadge" class="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-300 font-bold border border-white/10">USD NEWS</span>
     </div>
 
-    <!-- Timeframe & Checkbox Bar -->
+    <!-- Timeframe & Checkbox Controls -->
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="flex bg-[#0f172a] p-1 rounded-xl border border-white/10 gap-1 overflow-x-auto no-scrollbar">
-        <button data-tf="5m" onclick="switchInterval('5m')" class="tf-btn px-2.5 sm:px-3 py-1.5 text-xs rounded-lg text-gray-300 transition">5m</button>
-        <button data-tf="15m" onclick="switchInterval('15m')" class="tf-btn px-2.5 sm:px-3 py-1.5 text-xs rounded-lg text-gray-300 transition">15m</button>
-        <button data-tf="1h" onclick="switchInterval('1h')" class="tf-btn px-2.5 sm:px-3 py-1.5 text-xs rounded-lg text-gray-300 transition">1H</button>
-        <button data-tf="4h" onclick="switchInterval('4h')" class="tf-btn px-2.5 sm:px-3 py-1.5 text-xs rounded-lg text-gray-300 transition">4H</button>
-        <button data-tf="1d" onclick="switchInterval('1d')" class="tf-btn px-2.5 sm:px-3 py-1.5 text-xs rounded-lg text-gray-300 transition">1D</button>
+        <button data-tf="1m" onclick="switchInterval('1m')" class="tf-btn px-2.5 py-1.5 text-xs rounded-lg text-gray-300 transition">1m</button>
+        <button data-tf="5m" onclick="switchInterval('5m')" class="tf-btn px-2.5 py-1.5 text-xs rounded-lg text-gray-300 transition">5m</button>
+        <button data-tf="15m" onclick="switchInterval('15m')" class="tf-btn px-2.5 py-1.5 text-xs rounded-lg text-gray-300 transition">15m</button>
+        <button data-tf="1h" onclick="switchInterval('1h')" class="tf-btn px-2.5 py-1.5 text-xs rounded-lg text-gray-300 transition">1H</button>
+        <button data-tf="4h" onclick="switchInterval('4h')" class="tf-btn px-2.5 py-1.5 text-xs rounded-lg text-gray-300 transition">4H</button>
+        <button data-tf="1d" onclick="switchInterval('1d')" class="tf-btn px-2.5 py-1.5 text-xs rounded-lg text-gray-300 transition">1D</button>
       </div>
 
       <div class="flex items-center gap-1.5 flex-wrap">
@@ -169,7 +215,7 @@
       <div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-white/10 bg-[#0b1120]/90 text-[11px] text-gray-400">
         <div class="flex items-center gap-2.5 flex-wrap">
           <div id="fsLiveInfo" class="hidden items-center gap-2 pr-2 border-r border-white/10">
-            <span class="text-xs font-extrabold text-yellow-400">XAU/USD</span>
+            <span class="text-xs font-black brand-text">TRI PISAL</span>
             <span id="fsPrice" class="text-xs font-black text-white tabular-nums">--</span>
           </div>
           <span class="flex items-center gap-1"><span class="w-2.5 h-0.5 bg-sky-400 rounded"></span>EMA 20</span>
@@ -178,6 +224,7 @@
             PDH/Asian: OFF
           </button>
           <div id="fsTfBar" class="hidden items-center gap-1">
+            <button data-tf="1m" onclick="switchInterval('1m')" class="tf-btn px-2 py-0.5 text-[10px] rounded bg-white/5 text-gray-300">1m</button>
             <button data-tf="5m" onclick="switchInterval('5m')" class="tf-btn px-2 py-0.5 text-[10px] rounded bg-white/5 text-gray-300">5m</button>
             <button data-tf="15m" onclick="switchInterval('15m')" class="tf-btn px-2 py-0.5 text-[10px] rounded bg-white/5 text-gray-300">15m</button>
             <button data-tf="1h" onclick="switchInterval('1h')" class="tf-btn px-2 py-0.5 text-[10px] rounded bg-white/5 text-gray-300">1H</button>
@@ -204,21 +251,26 @@
         </div>
       </div>
 
-      <!-- Chart Stage + Custom Signal/Zone Canvas Overlay -->
-      <div id="chartStage" class="relative w-full">
-        <div id="chart" class="w-full h-[410px] sm:h-[480px]"></div>
+      <!-- Chart Stage -->
+      <div id="chartStage" class="relative w-full overflow-hidden">
+        <div id="chart" class="w-full h-[400px] sm:h-[480px]"></div>
 
-        <!-- Canvas គូរប្រអប់ BUY/SELL ធំៗចំបង្គោលទៀន និងតំបន់ Demand Zone ពណ៌ខៀវ -->
+        <!-- Watermark TRI PISAL -->
+        <div class="pointer-events-none select-none absolute inset-0 flex items-center justify-center pr-16 opacity-[0.045]">
+          <span class="text-3xl sm:text-5xl font-black tracking-[0.25em] text-yellow-300">TRI PISAL</span>
+        </div>
+
+        <!-- Canvas Pro Overlay (BUY/SELL Boxes, CHoCH, TP1, SL, Demand/Supply Zone) -->
         <canvas id="signalCanvas" class="pointer-events-none absolute inset-0 z-10"></canvas>
 
-        <!-- ប្រអប់តម្លៃ Live + នាឡិកាបិទទៀនលើជួរតម្លៃខាងស្តាំ -->
+        <!-- GPU Live Price + Countdown Pill -->
         <div id="axisLivePill" class="hidden bg-[#2962ff] text-white">
           <div id="pillPrice" class="text-[11px] font-black tabular-nums tracking-tight">----.--</div>
           <div id="pillTimer" class="text-[9.5px] font-bold tabular-nums opacity-95">--:--</div>
         </div>
 
-        <!-- ផ្ទាំង HUD Status / Entry / Stop Loss / Take Profit / R:R (ដាក់ជ្រុងស្តាំលើ កុំបាំងសញ្ញាឆ្វេង) -->
-        <div id="chartHud" class="pointer-events-none absolute top-2.5 right-[76px] sm:right-[82px] z-10 w-[134px] sm:w-[154px] rounded-xl bg-[#0b1220]/82 backdrop-blur-md border border-white/15 px-2.5 py-2 shadow-xl text-[10px] sm:text-[11px] space-y-1">
+        <!-- HUD Status / Entry / Stop Loss / Take Profit / R:R -->
+        <div id="chartHud" class="pointer-events-none absolute top-2.5 right-[78px] sm:right-[84px] z-10 w-[134px] sm:w-[154px] rounded-xl bg-[#0b1220]/84 backdrop-blur-md border border-white/15 px-2.5 py-2 shadow-xl text-[10px] sm:text-[11px] space-y-1">
           <div class="flex items-center justify-between border-b border-white/10 pb-1">
             <span class="text-gray-400 font-semibold">Status</span>
             <span id="hudSide" class="font-black text-yellow-400">--</span>
@@ -402,7 +454,7 @@
           <span class="text-[10px] text-gray-400">រក្សាទុកក្នុងទូរស័ព្ទ</span>
         </div>
         <form onsubmit="addPriceAlert(event)" class="flex gap-2 mb-3">
-          <input id="alertPriceInput" type="number" step="0.1" placeholder="បញ្ចូលតម្លៃគោលដៅ (ឧ. 3540)"
+          <input id="alertPriceInput" type="number" step="0.1" placeholder="បញ្ចូលតម្លៃគោលដៅ (ឧ. 3595)"
             class="flex-1 bg-black/35 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-amber-400/60" />
           <button type="submit" class="px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-[#080c14] font-bold text-xs active:scale-95 transition">បន្ថែម</button>
         </form>
@@ -433,7 +485,7 @@
       </div>
     </div>
 
-    <!-- EMBEDDED AI SECTION (នៅខាងក្រោមគេ បើក-បិទតាម Checkbox) -->
+    <!-- EMBEDDED AI SECTION (បើក-បិទតាម Checkbox នៅខាងលើ) -->
     <section id="aiSection" class="hidden glass rounded-2xl border border-yellow-500/25 overflow-hidden">
       <div class="bg-gradient-to-r from-yellow-500/15 via-slate-900/60 to-transparent px-4 py-3 border-b border-white/10 flex items-center justify-between">
         <div class="flex items-center gap-2.5">
@@ -441,7 +493,7 @@
             <i data-lucide="cpu" class="w-4 h-4"></i>
           </div>
           <div>
-            <h3 class="text-sm font-bold text-white leading-tight">Gold Quant AI Assistant</h3>
+            <h3 class="text-sm font-bold text-white leading-tight">TRI PISAL • Gold Quant AI</h3>
             <p class="text-[10px] text-emerald-400 font-medium">វិភាគ MTF • USD News • Institutional • មិនបាំងក្រាហ្វិក</p>
           </div>
         </div>
@@ -502,11 +554,13 @@
       return String(str ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
     }
 
+    const TF_SECONDS = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 };
+
     const Store = {
       KEYS: {
-        TF: 'gp_tf_v9', CHAT: 'gp_chat_v9', CALC: 'gp_calc_v9',
-        ALERTS: 'gp_alerts_v9', JOURNAL: 'gp_journal_v9',
-        PREFS: 'gp_prefs_v9', CACHE_PREFIX: 'gp_data_v9_'
+        TF: 'tp_tf_v12', CHAT: 'tp_chat_v12', CALC: 'tp_calc_v12',
+        ALERTS: 'tp_alerts_v12', JOURNAL: 'tp_journal_v12',
+        PREFS: 'tp_prefs_v12', CACHE_PREFIX: 'tp_data_v12_'
       },
       get(key, fallback = null) {
         try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : fallback; }
@@ -536,19 +590,30 @@
       { id: 'summary', text: 'សង្ខេបស្ថានភាពទីផ្សារមាសពេញលេញ', tag: 'សង្ខេបរួម' }
     ];
 
-    let currentInterval = Store.get(Store.KEYS.TF, '5m');
+    let currentInterval = Store.get(Store.KEYS.TF, '1m');
     let chatHistory = Store.get(Store.KEYS.CHAT, []);
     let calcPrefs = Store.get(Store.KEYS.CALC, { balance: 1000, risk: 1 });
     let uiPrefs = Store.get(Store.KEYS.PREFS, { showAI: false, showSignals: true, showZones: true, showSlTp: true, showInst: false });
     let priceAlerts = Store.get(Store.KEYS.ALERTS, []);
     let journalEntries = Store.get(Store.KEYS.JOURNAL, []);
     let currentSlDist = 4.0;
-    let ws = null, directWs = null, lastPrice = null, lastCandle = null, prevCandleClose = null;
-    let candleCount = 0, isFirstLoad = true, isFullscreen = false, useDirectStream = false;
-    let reconnectTimer = null, reconnectDelay = 2500, wsFailCount = 0, httpPollTimer = null;
-    let isAiBusy = false, noticeTimer = null, overlayRaf = null;
+
+    let ws = null, directWs = null, directRetryTimer = null, directSourceType = '';
+    let forexOffset = 0, lastRawCryptoPrice = 0, lastForexSpread = 0.20, isForexCalibrated = false;
+    let lastPrice = null, lastCandle = null, prevCandleClose = null, candleCount = 0;
+    let isFirstLoad = true, isFullscreen = false, reconnectTimer = null, reconnectDelay = 2000;
+    let wsFailCount = 0, httpPollTimer = null, isAiBusy = false, noticeTimer = null;
+    let overlayRaf = null, tickRaf = null, pendingTick = null, lastOverlayTickTs = 0, tickFlashTimer = null;
     let priceLines = { pdh: null, pdl: null, ah: null, al: null, entry: null, sl: null, tp1: null };
     let lastInstData = null, lastSetupData = null, lastChartSignals = [], lastZones = null;
+
+    const domLivePrice = document.getElementById('livePrice');
+    const domFsPrice = document.getElementById('fsPrice');
+    const domPriceChange = document.getElementById('priceChange');
+    const domBidAsk = document.getElementById('bidAskText');
+    const domAxisPill = document.getElementById('axisLivePill');
+    const domPillPrice = document.getElementById('pillPrice');
+    const domPillTimer = document.getElementById('pillTimer');
 
     lucide.createIcons();
     document.getElementById('calcBalance').value = calcPrefs.balance;
@@ -579,7 +644,7 @@
     const ema20Series = chart.addLineSeries({ color: '#38bdf8', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true });
     const ema50Series = chart.addLineSeries({ color: '#f59e0b', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true });
 
-    // ==================== TRADINGVIEW-STYLE BOXES & DEMAND ZONE CANVAS ====================
+    // ==================== BUY/SELL BOXES & DEMAND ZONE CANVAS ====================
     function drawRoundRect(ctx, x, y, w, h, r) {
       ctx.beginPath();
       ctx.moveTo(x + r, y);
@@ -596,8 +661,7 @@
 
     function renderOverlayNow() {
       overlayRaf = null;
-      const w = chartContainer.clientWidth;
-      const h = chartContainer.clientHeight;
+      const w = chartContainer.clientWidth, h = chartContainer.clientHeight;
       if (!w || !h) return;
 
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -611,36 +675,24 @@
       sCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       sCtx.clearRect(0, 0, w, h);
 
-      // កាត់គែមមិនឲ្យបាំងជួរតម្លៃខាងស្តាំ និងជួរម៉ោងខាងក្រោម
-      const plotW = Math.max(0, w - 68);
-      const plotH = Math.max(0, h - 26);
-
+      const plotW = Math.max(0, w - 72), plotH = Math.max(0, h - 26);
       sCtx.save();
-      sCtx.beginPath();
-      sCtx.rect(0, 0, plotW, plotH);
-      sCtx.clip();
+      sCtx.beginPath(); sCtx.rect(0, 0, plotW, plotH); sCtx.clip();
 
-      // ១. គូរតំបន់ Demand Zone ពណ៌ខៀវ (និង Supply Zone ក្រហមស្រាល)
       if (uiPrefs.showZones && lastZones) {
         if (lastZones.demand) {
           const yTop = candleSeries.priceToCoordinate(lastZones.demand.top);
           const yBot = candleSeries.priceToCoordinate(lastZones.demand.bottom);
           if (yTop !== null && yBot !== null) {
-            const topY = Math.min(yTop, yBot);
-            const boxH = Math.max(Math.abs(yBot - yTop), 14);
+            const topY = Math.min(yTop, yBot), boxH = Math.max(Math.abs(yBot - yTop), 14);
             sCtx.fillStyle = 'rgba(59, 130, 246, 0.22)';
             sCtx.fillRect(0, topY, plotW, boxH);
             sCtx.strokeStyle = 'rgba(96, 165, 250, 0.55)';
             sCtx.lineWidth = 1;
-            sCtx.beginPath();
-            sCtx.moveTo(0, topY); sCtx.lineTo(plotW, topY);
-            sCtx.moveTo(0, topY + boxH); sCtx.lineTo(plotW, topY + boxH);
-            sCtx.stroke();
-
+            sCtx.beginPath(); sCtx.moveTo(0, topY); sCtx.lineTo(plotW, topY); sCtx.moveTo(0, topY + boxH); sCtx.lineTo(plotW, topY + boxH); sCtx.stroke();
             sCtx.font = '700 9px system-ui, sans-serif';
-            sCtx.fillStyle = 'rgba(147, 197, 253, 0.9)';
-            sCtx.textAlign = 'left';
-            sCtx.textBaseline = 'top';
+            sCtx.fillStyle = 'rgba(147, 197, 253, 0.92)';
+            sCtx.textAlign = 'left'; sCtx.textBaseline = 'top';
             sCtx.fillText('DEMAND ZONE', 8, topY + 4);
           }
         }
@@ -648,21 +700,16 @@
           const yTop = candleSeries.priceToCoordinate(lastZones.supply.top);
           const yBot = candleSeries.priceToCoordinate(lastZones.supply.bottom);
           if (yTop !== null && yBot !== null) {
-            const topY = Math.min(yTop, yBot);
-            const boxH = Math.max(Math.abs(yBot - yTop), 12);
+            const topY = Math.min(yTop, yBot), boxH = Math.max(Math.abs(yBot - yTop), 12);
             sCtx.fillStyle = 'rgba(244, 63, 94, 0.11)';
             sCtx.fillRect(0, topY, plotW, boxH);
             sCtx.strokeStyle = 'rgba(244, 63, 94, 0.35)';
             sCtx.lineWidth = 1;
-            sCtx.beginPath();
-            sCtx.moveTo(0, topY); sCtx.lineTo(plotW, topY);
-            sCtx.moveTo(0, topY + boxH); sCtx.lineTo(plotW, topY + boxH);
-            sCtx.stroke();
+            sCtx.beginPath(); sCtx.moveTo(0, topY); sCtx.lineTo(plotW, topY); sCtx.moveTo(0, topY + boxH); sCtx.lineTo(plotW, topY + boxH); sCtx.stroke();
           }
         }
       }
 
-      // ២. គូរប្រអប់ BUY / SELL ធំៗចំបង្គោលទៀន + CHoCH + TP1 + SL
       if (uiPrefs.showSignals && Array.isArray(lastChartSignals)) {
         const tsScale = chart.timeScale();
         for (const sig of lastChartSignals) {
@@ -671,132 +718,77 @@
           if (x === null || y === null || x < -30 || x > plotW + 30) continue;
 
           if (sig.type === 'BUY') {
-            const bw = 42, bh = 21;
-            const bx = x - bw / 2;
-            const by = Math.min(plotH - bh - 4, y + 10);
-
-            // សញ្ញាព្រួញតូចចង្អុលទៅបាតទៀន
+            const bw = 42, bh = 21, bx = x - bw / 2, by = Math.min(plotH - bh - 4, y + 10);
             sCtx.fillStyle = '#16c784';
-            sCtx.beginPath();
-            sCtx.moveTo(x, by - 5);
-            sCtx.lineTo(x - 5, by + 1);
-            sCtx.lineTo(x + 5, by + 1);
-            sCtx.closePath();
-            sCtx.fill();
-
-            // ប្រអប់ពណ៌បៃតងធំ
+            sCtx.beginPath(); sCtx.moveTo(x, by - 5); sCtx.lineTo(x - 5, by + 1); sCtx.lineTo(x + 5, by + 1); sCtx.closePath(); sCtx.fill();
             drawRoundRect(sCtx, bx, by, bw, bh, 5);
-            sCtx.fillStyle = '#16c784';
-            sCtx.fill();
-            sCtx.strokeStyle = 'rgba(255,255,255,0.28)';
-            sCtx.lineWidth = 1;
-            sCtx.stroke();
-
-            sCtx.font = '800 10.5px system-ui, sans-serif';
-            sCtx.fillStyle = '#ffffff';
-            sCtx.textAlign = 'center';
-            sCtx.textBaseline = 'middle';
+            sCtx.fillStyle = '#16c784'; sCtx.fill();
+            sCtx.strokeStyle = 'rgba(255,255,255,0.28)'; sCtx.lineWidth = 1; sCtx.stroke();
+            sCtx.font = '800 10.5px system-ui, sans-serif'; sCtx.fillStyle = '#ffffff';
+            sCtx.textAlign = 'center'; sCtx.textBaseline = 'middle';
             sCtx.fillText('BUY', x, by + bh / 2 + 0.5);
-
             if (sig.sublabel) {
-              sCtx.font = '700 8.5px system-ui, sans-serif';
-              sCtx.fillStyle = '#6ee7b7';
+              sCtx.font = '700 8.5px system-ui, sans-serif'; sCtx.fillStyle = '#6ee7b7';
               sCtx.fillText(sig.sublabel, x, by + bh + 8);
             }
           } else if (sig.type === 'SELL') {
-            const bw = 44, bh = 21;
-            const bx = x - bw / 2;
-            const by = Math.max(4, y - bh - 10);
-
-            // សញ្ញាព្រួញតូចចង្អុលទៅកំពូលទៀន
+            const bw = 44, bh = 21, bx = x - bw / 2, by = Math.max(4, y - bh - 10);
             sCtx.fillStyle = '#ef4444';
-            sCtx.beginPath();
-            sCtx.moveTo(x, by + bh + 5);
-            sCtx.lineTo(x - 5, by + bh - 1);
-            sCtx.lineTo(x + 5, by + bh - 1);
-            sCtx.closePath();
-            sCtx.fill();
-
-            // ប្រអប់ពណ៌ក្រហមធំ
+            sCtx.beginPath(); sCtx.moveTo(x, by + bh + 5); sCtx.lineTo(x - 5, by + bh - 1); sCtx.lineTo(x + 5, by + bh - 1); sCtx.closePath(); sCtx.fill();
             drawRoundRect(sCtx, bx, by, bw, bh, 5);
-            sCtx.fillStyle = '#ef4444';
-            sCtx.fill();
-            sCtx.strokeStyle = 'rgba(255,255,255,0.28)';
-            sCtx.lineWidth = 1;
-            sCtx.stroke();
-
-            sCtx.font = '800 10.5px system-ui, sans-serif';
-            sCtx.fillStyle = '#ffffff';
-            sCtx.textAlign = 'center';
-            sCtx.textBaseline = 'middle';
+            sCtx.fillStyle = '#ef4444'; sCtx.fill();
+            sCtx.strokeStyle = 'rgba(255,255,255,0.28)'; sCtx.lineWidth = 1; sCtx.stroke();
+            sCtx.font = '800 10.5px system-ui, sans-serif'; sCtx.fillStyle = '#ffffff';
+            sCtx.textAlign = 'center'; sCtx.textBaseline = 'middle';
             sCtx.fillText('SELL', x, by + bh / 2 + 0.5);
-
             if (sig.sublabel) {
-              sCtx.font = '700 8.5px system-ui, sans-serif';
-              sCtx.fillStyle = '#fda4af';
+              sCtx.font = '700 8.5px system-ui, sans-serif'; sCtx.fillStyle = '#fda4af';
               sCtx.fillText(sig.sublabel, x, by - 7);
             }
           } else if (sig.type === 'TP1') {
-            const bw = 30, bh = 16;
-            const bx = x - bw / 2;
-            const by = Math.max(4, y - bh - 8);
+            const bw = 30, bh = 16, bx = x - bw / 2, by = Math.max(4, y - bh - 8);
             drawRoundRect(sCtx, bx, by, bw, bh, 4);
-            sCtx.fillStyle = 'rgba(34, 197, 94, 0.9)';
-            sCtx.fill();
-            sCtx.font = '800 9px system-ui, sans-serif';
-            sCtx.fillStyle = '#ffffff';
-            sCtx.textAlign = 'center';
-            sCtx.textBaseline = 'middle';
+            sCtx.fillStyle = 'rgba(34, 197, 94, 0.92)'; sCtx.fill();
+            sCtx.font = '800 9px system-ui, sans-serif'; sCtx.fillStyle = '#ffffff';
+            sCtx.textAlign = 'center'; sCtx.textBaseline = 'middle';
             sCtx.fillText('TP1', x, by + bh / 2 + 0.5);
           } else if (sig.type === 'SL') {
-            sCtx.strokeStyle = '#ff4d6d';
-            sCtx.lineWidth = 2;
+            sCtx.strokeStyle = '#ff4d6d'; sCtx.lineWidth = 2;
             const cy = y - 10;
-            sCtx.beginPath();
-            sCtx.moveTo(x - 4, cy - 4); sCtx.lineTo(x + 4, cy + 4);
-            sCtx.moveTo(x + 4, cy - 4); sCtx.lineTo(x - 4, cy + 4);
-            sCtx.stroke();
-            sCtx.font = '800 8.5px system-ui, sans-serif';
-            sCtx.fillStyle = '#fda4af';
-            sCtx.textAlign = 'center';
+            sCtx.beginPath(); sCtx.moveTo(x - 4, cy - 4); sCtx.lineTo(x + 4, cy + 4); sCtx.moveTo(x + 4, cy - 4); sCtx.lineTo(x - 4, cy + 4); sCtx.stroke();
+            sCtx.font = '800 8.5px system-ui, sans-serif'; sCtx.fillStyle = '#fda4af'; sCtx.textAlign = 'center';
             sCtx.fillText('SL', x, cy - 9);
           } else if (sig.type === 'CHoCH_UP' || sig.type === 'CHoCH_DN') {
             const isUp = sig.type === 'CHoCH_UP';
             const ly = isUp ? Math.max(12, y - 14) : Math.min(plotH - 12, y + 14);
             sCtx.strokeStyle = isUp ? 'rgba(56, 189, 248, 0.6)' : 'rgba(251, 191, 36, 0.6)';
-            sCtx.lineWidth = 1;
-            sCtx.setLineDash([3, 2]);
-            sCtx.beginPath();
-            sCtx.moveTo(x - 16, ly); sCtx.lineTo(x + 16, ly);
-            sCtx.stroke();
-            sCtx.setLineDash([]);
-            sCtx.font = '700 8.5px system-ui, sans-serif';
-            sCtx.fillStyle = isUp ? '#7dd3fc' : '#fcd34d';
-            sCtx.textAlign = 'center';
-            sCtx.textBaseline = 'middle';
+            sCtx.lineWidth = 1; sCtx.setLineDash([3, 2]);
+            sCtx.beginPath(); sCtx.moveTo(x - 16, ly); sCtx.lineTo(x + 16, ly); sCtx.stroke(); sCtx.setLineDash([]);
+            sCtx.font = '700 8.5px system-ui, sans-serif'; sCtx.fillStyle = isUp ? '#7dd3fc' : '#fcd34d';
+            sCtx.textAlign = 'center'; sCtx.textBaseline = 'middle';
             sCtx.fillText('CHoCH', x, ly - 7);
           }
         }
       }
-
       sCtx.restore();
     }
 
-    function scheduleOverlay() {
-      if (!overlayRaf) overlayRaf = requestAnimationFrame(renderOverlayNow);
-    }
+    function scheduleOverlay() { if (!overlayRaf) overlayRaf = requestAnimationFrame(renderOverlayNow); }
 
     function updateAxisLivePill(price, direction = 0) {
-      const pill = document.getElementById('axisLivePill');
       if (!price || isNaN(price)) return;
-      document.getElementById('pillPrice').textContent = price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      if (direction > 0) pill.style.backgroundColor = '#00a87e';
-      else if (direction < 0) pill.style.backgroundColor = '#e11d48';
+      domPillPrice.textContent = price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      if (direction > 0) domAxisPill.style.backgroundColor = '#00a87e';
+      else if (direction < 0) domAxisPill.style.backgroundColor = '#e11d48';
 
       const y = candleSeries.priceToCoordinate(price);
       const stageH = chartContainer.clientHeight;
-      if (y === null || y < 14 || y > stageH - 28) pill.classList.add('hidden');
-      else { pill.classList.remove('hidden'); pill.style.top = `${y}px`; }
+      if (y === null || y < 14 || y > stageH - 28) {
+        domAxisPill.classList.add('hidden');
+      } else {
+        domAxisPill.classList.remove('hidden');
+        domAxisPill.style.transform = `translate3d(0, ${y}px, 0) translateY(-50%)`;
+      }
     }
 
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
@@ -805,7 +797,6 @@
     });
     chart.timeScale().subscribeVisibleTimeRangeChange(scheduleOverlay);
 
-    // ធានាថាប្រអប់ BUY/SELL និង Demand Zone តាមជាប់ទៀនជានិច្ចពេលអូស ឬ Zoom
     ['pointermove', 'wheel', 'touchmove', 'touchend', 'mouseup'].forEach(ev => {
       chartContainer.addEventListener(ev, () => {
         scheduleOverlay();
@@ -841,12 +832,12 @@
       } catch {}
     }
 
-    // ==================== FULLSCREEN (PORTRAIT & LANDSCAPE) ====================
+    // ==================== FULLSCREEN ====================
     function toggleFullscreen(forceState = null) {
       const card = document.getElementById('chartCard');
       isFullscreen = forceState !== null ? Boolean(forceState) : !isFullscreen;
       card.classList.toggle('is-fullscreen', isFullscreen);
-      document.body.style.overflow = isFullscreen ? 'hidden' : '';
+      document.body.style.overflowY = isFullscreen ? 'hidden' : '';
 
       document.getElementById('fsIconEnter').classList.toggle('hidden', isFullscreen);
       document.getElementById('fsIconEnter').classList.toggle('flex', !isFullscreen);
@@ -1055,72 +1046,151 @@
       document.getElementById('resSlDist').textContent = `$${slDist.toFixed(2)}`;
     }
 
+    // ==================== PHONE-POWERED HYBRID TURBO TICK ENGINE ====================
     function updatePriceUI(price, change, changePct) {
       if (!price || isNaN(price)) return;
-      const priceEl = document.getElementById('livePrice');
       const dir = lastPrice !== null ? (price > lastPrice ? 1 : price < lastPrice ? -1 : 0) : 0;
 
-      priceEl.textContent = `$${price.toFixed(2)}`;
-      document.getElementById('fsPrice').textContent = `$${price.toFixed(2)}`;
+      const formatted = `$${price.toFixed(2)}`;
+      domLivePrice.textContent = formatted;
+      domFsPrice.textContent = formatted;
+
       if (dir !== 0) {
-        priceEl.classList.remove('tick-up', 'tick-down');
-        void priceEl.offsetWidth;
-        priceEl.classList.add(dir > 0 ? 'tick-up' : 'tick-down');
+        domLivePrice.style.color = dir > 0 ? '#00e5a8' : '#ff5c7c';
+        clearTimeout(tickFlashTimer);
+        tickFlashTimer = setTimeout(() => { domLivePrice.style.color = '#f9fafb'; }, 130);
       }
       lastPrice = price;
       updateAxisLivePill(price, dir);
       checkPriceAlerts(price);
 
       if (typeof change === 'number' && !isNaN(change)) {
-        const changeEl = document.getElementById('priceChange'), sign = change >= 0 ? '+' : '';
-        changeEl.textContent = `${sign}${change.toFixed(2)} (${sign}${(changePct || 0).toFixed(2)}%)`;
-        changeEl.className = `text-xs font-semibold tabular-nums ${change >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+        const sign = change >= 0 ? '+' : '';
+        domPriceChange.textContent = `${sign}${change.toFixed(2)} (${sign}${(changePct || 0).toFixed(2)}%)`;
+        domPriceChange.className = `text-[11px] sm:text-xs font-semibold tabular-nums ${change >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
       }
     }
 
-    function applyTick(msg) {
+    function flushTick() {
+      tickRaf = null;
+      const msg = pendingTick;
+      if (!msg) return;
+      pendingTick = null;
+
       const livePrice = typeof msg === 'number' ? msg : msg.price;
       if (!livePrice || isNaN(livePrice)) return;
+
+      if (lastCandle && lastCandle.time) {
+        const tfSec = TF_SECONDS[currentInterval] || 60;
+        const barTime = Math.floor(Date.now() / 1000 / tfSec) * tfSec;
+        if (barTime > lastCandle.time) {
+          prevCandleClose = lastCandle.close;
+          lastCandle = { time: barTime, open: livePrice, high: livePrice, low: livePrice, close: livePrice };
+          candleCount++;
+        } else {
+          lastCandle = {
+            ...lastCandle,
+            close: livePrice,
+            high: Math.max(lastCandle.high, livePrice),
+            low: Math.min(lastCandle.low, livePrice)
+          };
+        }
+        try { candleSeries.update(lastCandle); } catch {}
+        const now = performance.now();
+        if (now - lastOverlayTickTs > 220) {
+          lastOverlayTickTs = now;
+          scheduleOverlay();
+        }
+      }
+
       let ch = 0, chPct = 0;
       if (prevCandleClose) { ch = livePrice - prevCandleClose; chPct = (ch / prevCandleClose) * 100; }
       updatePriceUI(livePrice, ch, chPct);
 
       if (msg.bid && msg.ask) {
-        document.getElementById('bidAskText').textContent =
-          `Bid $${msg.bid.toFixed(2)} • Ask $${msg.ask.toFixed(2)} (Spd $${(msg.spread || 0).toFixed(2)})`;
+        domBidAsk.textContent = `Bid $${msg.bid.toFixed(2)} • Ask $${msg.ask.toFixed(2)} (Spd $${(msg.spread || 0).toFixed(2)})`;
       }
-      if (lastCandle && lastCandle.time) {
-        lastCandle = { ...lastCandle, close: livePrice, high: Math.max(lastCandle.high, livePrice), low: Math.min(lastCandle.low, livePrice) };
-        try { candleSeries.update(lastCandle); } catch {}
-        scheduleOverlay();
-      }
+    }
+
+    function applyTick(msg) {
+      pendingTick = msg;
+      if (!tickRaf) tickRaf = requestAnimationFrame(flushTick);
     }
 
     setInterval(() => {
-      const secMap = { '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 };
-      const tfSec = secMap[currentInterval] || 900;
+      const tfSec = TF_SECONDS[currentInterval] || 60;
       const rem = tfSec - (Math.floor(Date.now() / 1000) % tfSec);
       const h = Math.floor(rem / 3600), m = Math.floor((rem % 3600) / 60), s = rem % 60;
-      const txt = h > 0 ? `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-      document.getElementById('pillTimer').textContent = txt;
+      domPillTimer.textContent = h > 0
+        ? `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+        : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
     }, 1000);
 
     function stopDirectStream() {
+      if (directRetryTimer) { clearTimeout(directRetryTimer); directRetryTimer = null; }
       if (directWs) { directWs.onclose = null; directWs.onerror = null; directWs.close(); directWs = null; }
     }
-    function startDirectStream() {
-      if (directWs || document.hidden || !navigator.onLine) return;
+
+    function emitCalibratedTick(rawPrice) {
+      if (!rawPrice || isNaN(rawPrice)) return;
+      lastRawCryptoPrice = rawPrice;
+      const calPrice = Math.round((rawPrice + forexOffset) * 100) / 100;
+      const halfSpd = lastForexSpread / 2;
+      applyTick({
+        price: calPrice,
+        bid: Math.round((calPrice - halfSpd) * 100) / 100,
+        ask: Math.round((calPrice + halfSpd) * 100) / 100,
+        spread: lastForexSpread
+      });
+    }
+
+    function startDirectStream(sourceType) {
+      const target = sourceType === 'XAUT' ? 'XAUT' : 'PAXG';
+      if (directWs && directSourceType === target) return;
+      stopDirectStream();
+      directSourceType = target;
+      if (document.hidden || !navigator.onLine) return;
+
       try {
-        directWs = new WebSocket('wss://data-stream.binance.vision/ws/paxgusdt@bookTicker');
-        directWs.onmessage = (e) => {
-          try {
-            const d = JSON.parse(e.data);
-            const bid = parseFloat(d.b), ask = parseFloat(d.a);
-            if (bid > 0 && ask > 0) applyTick({ price: (bid + ask) / 2, bid, ask, spread: Math.max(0, ask - bid) });
-          } catch {}
-        };
-        directWs.onclose = () => { directWs = null; };
-        directWs.onerror = () => { stopDirectStream(); };
+        if (target === 'PAXG') {
+          directWs = new WebSocket('wss://data-stream.binance.vision/stream?streams=paxgusdt@aggTrade/paxgusdt@bookTicker');
+          directWs.onmessage = (e) => {
+            try {
+              const wrap = JSON.parse(e.data);
+              const d = wrap.data || wrap;
+              if (d.e === 'aggTrade') {
+                const p = parseFloat(d.p);
+                if (p > 0) emitCalibratedTick(p);
+              } else if (d.b && d.a) {
+                const bid = parseFloat(d.b), ask = parseFloat(d.a);
+                if (bid > 0 && ask > 0) emitCalibratedTick((bid + ask) / 2);
+              }
+            } catch {}
+          };
+        } else {
+          directWs = new WebSocket('wss://ws.okx.com:8443/ws/v5/public');
+          directWs.onopen = () => {
+            try { directWs.send(JSON.stringify({ op: 'subscribe', args: [{ channel: 'tickers', instId: 'XAUT-USDT' }] })); } catch {}
+          };
+          directWs.onmessage = (e) => {
+            try {
+              const msg = JSON.parse(e.data);
+              if (msg.data && msg.data[0]) {
+                const last = parseFloat(msg.data[0].last);
+                if (last > 0) emitCalibratedTick(last);
+              }
+            } catch {}
+          };
+        }
+        if (directWs) {
+          directWs.onclose = () => {
+            directWs = null;
+            if (!document.hidden && navigator.onLine && directSourceType) {
+              directRetryTimer = setTimeout(() => startDirectStream(directSourceType), 1000);
+            }
+          };
+          directWs.onerror = () => { stopDirectStream(); };
+        }
       } catch {}
     }
 
@@ -1129,17 +1199,19 @@
       if (data.interval && data.interval !== currentInterval) return;
 
       document.getElementById('loader').style.display = 'none';
-      document.getElementById('dataSource').textContent = fromCache ? `${data.source} • ក្នុងទូរស័ព្ទ` : `${data.source} • Real-time`;
+      document.getElementById('dataSource').textContent = fromCache ? `${data.source} • ក្នុងទូរស័ព្ទ` : `${data.source} • Turbo`;
 
-      useDirectStream = Boolean(data.source && data.source.includes('PAXG'));
-      if (useDirectStream && !fromCache) startDirectStream();
-      else if (!useDirectStream) stopDirectStream();
+      if (typeof data.basis_offset === 'number' && !isNaN(data.basis_offset)) forexOffset = data.basis_offset;
+      if (data.spread && data.spread > 0) lastForexSpread = data.spread;
+      isForexCalibrated = Boolean(data.is_forex);
+
+      if (!fromCache) startDirectStream(data.raw_feed === 'XAUT' ? 'XAUT' : 'PAXG');
 
       const fb = document.getElementById('feedBadge');
-      fb.textContent = data.is_spot ? 'SPOT' : 'FUTURES';
-      fb.className = data.is_spot
-        ? 'hidden sm:inline-block text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/25'
-        : 'hidden sm:inline-block text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 font-bold border border-amber-500/25';
+      fb.textContent = isForexCalibrated ? 'FOREX' : (data.is_spot ? 'SPOT' : 'FUTURES');
+      fb.className = isForexCalibrated
+        ? 'hidden sm:inline-block text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/25 shrink-0'
+        : 'hidden sm:inline-block text-[9px] px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 font-bold border border-sky-500/25 shrink-0';
 
       if (data.session?.name) document.getElementById('sessionText').textContent = data.session.name;
       candleCount = data.candles.length;
@@ -1147,8 +1219,7 @@
       prevCandleClose = candleCount > 1 ? data.candles[candleCount - 2].close : lastCandle.open;
 
       if (data.bid && data.ask) {
-        document.getElementById('bidAskText').textContent =
-          `Bid $${data.bid.toFixed(2)} • Ask $${data.ask.toFixed(2)} (Spd $${(data.spread || 0).toFixed(2)})`;
+        domBidAsk.textContent = `Bid $${data.bid.toFixed(2)} • Ask $${data.ask.toFixed(2)} (Spd $${(data.spread || 0).toFixed(2)})`;
       }
 
       const sigEl = document.getElementById('signalBadge');
@@ -1249,16 +1320,26 @@
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       ws = new WebSocket(`${protocol}//${location.host}/ws/gold/${currentInterval}`);
       ws.onopen = () => {
-        wsFailCount = 0; reconnectDelay = 2500; stopHttpFallback();
-        document.getElementById('wsStatus').textContent = 'LIVE';
+        wsFailCount = 0; reconnectDelay = 2000; stopHttpFallback();
+        document.getElementById('wsStatus').textContent = 'TURBO';
         document.getElementById('wsDot').className = 'relative inline-flex rounded-full h-2 w-2 bg-emerald-500';
       };
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
           if (msg.type === 'ping') return;
-          if (msg.type === 'full') applyFullData(msg, false);
-          else if (msg.type === 'tick' && !directWs) applyTick(msg);
+          if (msg.type === 'full') {
+            applyFullData(msg, false);
+          } else if (msg.type === 'tick') {
+            if (msg.is_forex && msg.price > 0) {
+              if (lastRawCryptoPrice > 0) {
+                const newOffset = msg.price - lastRawCryptoPrice;
+                if (Math.abs(newOffset) < 120) forexOffset = newOffset;
+              }
+              if (msg.spread && msg.spread > 0) lastForexSpread = msg.spread;
+            }
+            applyTick(msg);
+          }
         } catch {}
       };
       ws.onclose = () => {
@@ -1268,14 +1349,14 @@
         if (wsFailCount >= 2) startHttpFallback();
         if (!document.hidden && navigator.onLine) {
           reconnectTimer = setTimeout(connectWebSocket, reconnectDelay);
-          reconnectDelay = Math.min(reconnectDelay * 1.5, 15000);
+          reconnectDelay = Math.min(reconnectDelay * 1.5, 12000);
         }
       };
     }
 
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) { if (reconnectTimer) clearTimeout(reconnectTimer); stopHttpFallback(); stopDirectStream(); }
-      else { connectWebSocket(); if (useDirectStream) startDirectStream(); }
+      else { connectWebSocket(); if (directSourceType) startDirectStream(directSourceType); }
     });
     window.addEventListener('online', () => { document.getElementById('offlineBar').classList.add('hidden'); connectWebSocket(); });
     window.addEventListener('offline', () => {
@@ -1295,7 +1376,7 @@
       tfDebounce = setTimeout(() => {
         currentInterval = tf; isFirstLoad = true; lastCandle = null;
         Store.set(Store.KEYS.TF, tf); setActiveTfButton(tf); connectWebSocket();
-      }, 120);
+      }, 100);
     }
 
     // ==================== AI COPILOT ====================
@@ -1351,7 +1432,7 @@
     function renderChatHistory() {
       const box = document.getElementById('aiMessages');
       if (!chatHistory.length) {
-        box.innerHTML = `<div class="bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm p-3.5 text-gray-200 space-y-1"><div class="text-yellow-400 font-bold text-xs">Gold Quant AI រួចរាល់សម្រាប់វិភាគ</div><p class="text-xs text-gray-300">ចុចលើប្រអប់ខាងក្រោម ដើម្បីជ្រើសរើសសំណួរវិភាគទាំង ១០ មុខ (MTF, USD News, PDH/PDL, Entry និង SL/TP)។</p></div>`;
+        box.innerHTML = `<div class="bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm p-3.5 text-gray-200 space-y-1"><div class="text-yellow-400 font-bold text-xs">TRI PISAL AI រួចរាល់សម្រាប់វិភាគ</div><p class="text-xs text-gray-300">ចុចលើប្រអប់ខាងក្រោម ដើម្បីជ្រើសរើសសំណួរវិភាគទាំង ១០ មុខ (MTF, USD News, PDH/PDL, Entry និង SL/TP)។</p></div>`;
         return;
       }
       box.innerHTML = chatHistory.map(item => {
