@@ -1,10 +1,20 @@
+# ==========================================================
+# main.py - TRI PISAL Gold XAU/USD Pro Terminal (V10.4 Institutional Quant)
+# ពង្រឹងបន្ថែម៖
+#   1) Real-Time Order Flow Engine (Binance aggTrades + OKX Trades)
+#   2) Cross-Source Sanity Check (Swissquote vs Binance vs OKX Glitch Filter)
+#   3) Dual Economic Calendar (ForexFactory + Finnhub Free Tier)
+#   4) Real Volume in Candles + Parallel Extras & asyncio.gather Broadcaster
+#   5) Full Sync with brain_service.py V10.4 (FRED, 4-Layer Confluence, BE@50%TP1)
+# ==========================================================
 import os
+import re
 import math
 import time
 import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 
 import requests
@@ -19,21 +29,52 @@ from pydantic import BaseModel
 
 from brain_service import brain_service
 
-# ==================== HTTP SESSION POOL ====================
+
+# ==================== TIMEZONE HELPERS (KH LOCAL / NY / UTC) ====================
+def _get_tz(name: str, fallback_hours: int):
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name)
+    except Exception:
+        return timezone(timedelta(hours=fallback_hours))
+
+
+TZ_KH = _get_tz("Asia/Phnom_Penh", 7)
+TZ_NY = _get_tz("America/New_York", -5)
+
+
+def format_dual_time(dt_utc: datetime | None) -> dict:
+    if dt_utc is None:
+        return {"kh": "--", "ny": "--", "utc": "--"}
+    try:
+        dt_utc = dt_utc.replace(tzinfo=timezone.utc) if dt_utc.tzinfo is None else dt_utc.astimezone(timezone.utc)
+        return {
+            "kh": dt_utc.astimezone(TZ_KH).strftime("%d/%m %H:%M"),
+            "ny": dt_utc.astimezone(TZ_NY).strftime("%H:%M NY"),
+            "utc": dt_utc.strftime("%H:%M UTC"),
+        }
+    except Exception:
+        return {"kh": "--", "ny": "--", "utc": "--"}
+
+
+# ==================== HTTP SESSION POOL & CONFIG ====================
 http_session = requests.Session()
-adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=1)
+adapter = HTTPAdapter(pool_connections=16, pool_maxsize=32, max_retries=1)
 http_session.mount("https://", adapter)
 http_session.mount("http://", adapter)
-http_session.headers.update({"User-Agent": "TriPisalGoldTerminal/8.4"})
+http_session.headers.update({"User-Agent": "TriPisalGoldTerminal/10.4"})
 
 OANDA_API_KEY = os.getenv("OANDA_API_KEY", "").strip()
 TWELVE_DATA_KEY = os.getenv("TWELVE_DATA_API_KEY", "").strip()
+FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "").strip()
 
 VALID_INTERVALS = ("1m", "5m", "15m", "1h", "4h", "1d")
 ALLOWED_PRESETS = {
     "brain_v8", "entry", "risk_plan", "deep_scan", "mtf_check",
     "news_check", "inst_levels", "trend", "pattern", "volatility", "summary"
 }
+
+NO_CACHE_HEADERS = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
 
 
 class ChatRequest(BaseModel):
@@ -83,8 +124,11 @@ class SafeCache:
 
 
 cache = SafeCache()
-# កំណត់ 2 workers ដើម្បីសន្សំ CPU/RAM លើ Render Free (0.1 CPU / 512 MB RAM)
-mtf_executor = ThreadPoolExecutor(max_workers=2)
+mtf_executor = ThreadPoolExecutor(max_workers=4)
+extras_executor = ThreadPoolExecutor(max_workers=6)
+_basis_lock = threading.Lock()
+_last_valid_basis = 0.0
+_last_quote_state = {"price": 0.0, "ts": 0.0}
 
 
 def safe_float(val, default: float = 0.0, digits: int = 2) -> float:
@@ -97,7 +141,7 @@ def safe_float(val, default: float = 0.0, digits: int = 2) -> float:
         return default
 
 
-# ==================== SHARED WEBSOCKET MANAGER ====================
+# ==================== SHARED CONCURRENT WEBSOCKET MANAGER ====================
 class ConnectionManager:
     def __init__(self):
         self.clients: dict[WebSocket, str] = {}
@@ -120,7 +164,7 @@ class ConnectionManager:
         async with self._lock:
             return len(self.clients)
 
-    async def safe_send(self, ws: WebSocket, payload: dict, timeout: float = 3.0) -> bool:
+    async def safe_send(self, ws: WebSocket, payload: dict, timeout: float = 2.5) -> bool:
         try:
             await asyncio.wait_for(ws.send_json(payload), timeout=timeout)
             return True
@@ -128,16 +172,23 @@ class ConnectionManager:
             await self.disconnect(ws)
             return False
 
+    async def broadcast_many(self, pairs: list[tuple[WebSocket, dict]], timeout: float = 2.5):
+        if not pairs:
+            return
+        await asyncio.gather(
+            *(self.safe_send(ws, payload, timeout=timeout) for ws, payload in pairs),
+            return_exceptions=True,
+        )
+
 
 manager = ConnectionManager()
 
 
 # ==================== REAL FOREX SPOT XAU/USD QUOTE ENGINE ====================
 def _fetch_swissquote_xau() -> dict | None:
-    """ទាញតម្លៃមាស Forex Spot XAU/USD ផ្ទាល់ពីធនាគារ Swissquote (ឥតគិតថ្លៃ មិនបាច់ API Key)"""
     try:
         url = "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD"
-        res = http_session.get(url, timeout=(2.5, 3.5))
+        res = http_session.get(url, timeout=(2.0, 3.0))
         if res.status_code == 200:
             data = res.json()
             if isinstance(data, list) and data:
@@ -147,7 +198,7 @@ def _fetch_swissquote_xau() -> dict | None:
                     for sp in prices:
                         bid = safe_float(sp.get("bid"), 0.0)
                         ask = safe_float(sp.get("ask"), 0.0)
-                        if bid > 1000 and ask > 1000:
+                        if bid > 1000 and ask > 1000 and ask >= bid:
                             if sp.get("spreadProfile", "").lower() in ("standard", "prime"):
                                 best = (bid, ask)
                                 break
@@ -163,7 +214,42 @@ def _fetch_swissquote_xau() -> dict | None:
                         "ask": ask,
                         "spread": safe_float(max(0.0, ask - bid)),
                         "is_forex": True,
-                        "feed": "Forex Spot Live • XAU/USD"
+                        "feed": "Forex Spot Live • XAU/USD",
+                    }
+    except Exception:
+        pass
+    return None
+
+
+def _fetch_binance_paxg_ticker() -> dict | None:
+    try:
+        url = "https://data-api.binance.vision/api/v3/ticker/bookTicker?symbol=PAXGUSDT"
+        res = http_session.get(url, timeout=(2.0, 3.0))
+        if res.status_code == 200:
+            d = res.json()
+            bid, ask = safe_float(d.get("bidPrice")), safe_float(d.get("askPrice"))
+            if bid > 1000 and ask > 1000:
+                return {
+                    "price": safe_float((bid + ask) / 2), "bid": bid, "ask": ask,
+                    "spread": safe_float(max(0.0, ask - bid)), "is_forex": False, "feed": "PAXG/USD"
+                }
+    except Exception:
+        pass
+    return None
+
+
+def _fetch_okx_xaut_ticker() -> dict | None:
+    try:
+        url = "https://www.okx.com/api/v5/market/ticker?instId=XAUT-USDT"
+        res = http_session.get(url, timeout=(2.0, 3.0))
+        if res.status_code == 200:
+            data = res.json().get("data", [])
+            if data:
+                bid, ask = safe_float(data[0].get("bidPx")), safe_float(data[0].get("askPx"))
+                if bid > 1000 and ask > 1000:
+                    return {
+                        "price": safe_float((bid + ask) / 2), "bid": bid, "ask": ask,
+                        "spread": safe_float(max(0.0, ask - bid)), "is_forex": False, "feed": "XAUT/USD"
                     }
     except Exception:
         pass
@@ -174,7 +260,7 @@ def _fetch_live_quote_raw() -> dict | None:
     if OANDA_API_KEY:
         try:
             url = "https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles?granularity=S5&count=1&price=BA"
-            res = http_session.get(url, headers={"Authorization": f"Bearer {OANDA_API_KEY}"}, timeout=(2.5, 3.5)).json()
+            res = http_session.get(url, headers={"Authorization": f"Bearer {OANDA_API_KEY}"}, timeout=(2.0, 3.0)).json()
             if "candles" in res and res["candles"]:
                 c = res["candles"][-1]
                 bid, ask = safe_float(c["bid"]["c"]), safe_float(c["ask"]["c"])
@@ -193,7 +279,7 @@ def _fetch_live_quote_raw() -> dict | None:
     if TWELVE_DATA_KEY:
         try:
             url = f"https://api.twelvedata.com/price?symbol=XAU/USD&apikey={TWELVE_DATA_KEY}"
-            res = http_session.get(url, timeout=(2.5, 3.5)).json()
+            res = http_session.get(url, timeout=(2.0, 3.0)).json()
             if "price" in res:
                 p = safe_float(res["price"])
                 if p > 0:
@@ -201,33 +287,160 @@ def _fetch_live_quote_raw() -> dict | None:
         except Exception:
             pass
 
-    try:
-        url = "https://data-api.binance.vision/api/v3/ticker/bookTicker?symbol=PAXGUSDT"
-        res = http_session.get(url, timeout=(2.5, 3.5))
-        if res.status_code == 200:
-            d = res.json()
-            bid, ask = safe_float(d.get("bidPrice")), safe_float(d.get("askPrice"))
-            if bid > 0 and ask > 0:
-                return {"price": safe_float((bid + ask) / 2), "bid": bid, "ask": ask, "spread": safe_float(max(0.0, ask - bid)), "is_forex": False, "feed": "PAXG/USD"}
-    except Exception:
-        pass
+    bn = _fetch_binance_paxg_ticker()
+    if bn:
+        return bn
 
-    try:
-        url = "https://www.okx.com/api/v5/market/ticker?instId=XAUT-USDT"
-        res = http_session.get(url, timeout=(2.5, 3.5))
-        if res.status_code == 200:
-            data = res.json().get("data", [])
-            if data:
-                bid, ask = safe_float(data[0].get("bidPx")), safe_float(data[0].get("askPx"))
-                if bid > 0 and ask > 0:
-                    return {"price": safe_float((bid + ask) / 2), "bid": bid, "ask": ask, "spread": safe_float(max(0.0, ask - bid)), "is_forex": False, "feed": "XAUT/USD"}
-    except Exception:
-        pass
-    return None
+    return _fetch_okx_xaut_ticker()
 
 
 def fetch_live_quote() -> dict | None:
-    return cache.get_or_fetch("live_quote", 2.0, _fetch_live_quote_raw)
+    return cache.get_or_fetch("live_quote", 1.8, _fetch_live_quote_raw)
+
+
+# ==================== REAL-TIME ORDER FLOW ENGINE (BINANCE + OKX) ====================
+def _fetch_binance_order_flow() -> tuple[float, float, int]:
+    """Binance aggTrades: m=False មានន័យថា Taker Buy (កម្លាំងទិញរុញឡើង), m=True ជា Taker Sell"""
+    try:
+        url = "https://data-api.binance.vision/api/v3/aggTrades?symbol=PAXGUSDT&limit=100"
+        res = http_session.get(url, timeout=(2.0, 3.0))
+        if res.status_code == 200:
+            trades = res.json()
+            if isinstance(trades, list) and trades:
+                buy_v, sell_v = 0.0, 0.0
+                for t in trades:
+                    qty = float(t.get("q") or 0.0)
+                    if t.get("m"):
+                        sell_v += qty
+                    else:
+                        buy_v += qty
+                return buy_v, sell_v, len(trades)
+    except Exception:
+        pass
+    return 0.0, 0.0, 0
+
+
+def _fetch_okx_order_flow() -> tuple[float, float, int]:
+    """OKX recent trades: side='buy' ជាកម្លាំងទិញ, side='sell' ជាកម្លាំងលក់"""
+    try:
+        url = "https://www.okx.com/api/v5/market/trades?instId=XAUT-USDT&limit=80"
+        res = http_session.get(url, timeout=(2.0, 3.0))
+        if res.status_code == 200:
+            trades = res.json().get("data") or []
+            if isinstance(trades, list) and trades:
+                buy_v, sell_v = 0.0, 0.0
+                for t in trades:
+                    sz = float(t.get("sz") or 0.0)
+                    if t.get("side") == "buy":
+                        buy_v += sz
+                    else:
+                        sell_v += sz
+                return buy_v, sell_v, len(trades)
+    except Exception:
+        pass
+    return 0.0, 0.0, 0
+
+
+def _fetch_order_flow_raw() -> dict:
+    f_bn = extras_executor.submit(_fetch_binance_order_flow)
+    f_okx = extras_executor.submit(_fetch_okx_order_flow)
+    try:
+        bn_b, bn_s, bn_n = f_bn.result(timeout=3.5)
+    except Exception:
+        bn_b, bn_s, bn_n = 0.0, 0.0, 0
+    try:
+        ok_b, ok_s, ok_n = f_okx.result(timeout=3.5)
+    except Exception:
+        ok_b, ok_s, ok_n = 0.0, 0.0, 0
+
+    tot_b = bn_b + ok_b
+    tot_s = bn_s + ok_s
+    tot_n = bn_n + ok_n
+    tot_v = tot_b + tot_s
+
+    sources = []
+    if bn_n > 0:
+        sources.append("Binance")
+    if ok_n > 0:
+        sources.append("OKX")
+
+    buy_pct = round((tot_b / tot_v) * 100.0, 1) if tot_v > 0 else 50.0
+    return {
+        "buy_pct": buy_pct,
+        "sell_pct": round(100.0 - buy_pct, 1),
+        "buy_vol": round(tot_b, 3),
+        "sell_vol": round(tot_s, 3),
+        "trades_count": tot_n,
+        "source": "+".join(sources) if sources else "CANDLES",
+    }
+
+
+def fetch_order_flow() -> dict:
+    res = cache.get_or_fetch("order_flow", 5.0, _fetch_order_flow_raw)
+    return res or {"buy_pct": 50.0, "sell_pct": 50.0, "buy_vol": 0.0, "sell_vol": 0.0, "trades_count": 0, "source": "CANDLES"}
+
+
+# ==================== CROSS-SOURCE SANITY CHECK (GLITCH PROTECTION) ====================
+def _fetch_cross_prices_raw() -> dict:
+    f_sq = extras_executor.submit(_fetch_swissquote_xau)
+    f_bn = extras_executor.submit(_fetch_binance_paxg_ticker)
+    f_okx = extras_executor.submit(_fetch_okx_xaut_ticker)
+    out = {}
+    for name, fut in (("swissquote", f_sq), ("binance", f_bn), ("okx", f_okx)):
+        try:
+            q = fut.result(timeout=3.2)
+            if q and q.get("price", 0) > 1000:
+                out[name] = float(q["price"])
+        except Exception:
+            pass
+    return out
+
+
+def check_cross_source_sanity(live_price: float, basis: float = 0.0) -> dict:
+    global _last_quote_state
+    now = time.monotonic()
+    spike_glitch = False
+    spike_note = ""
+
+    # 1) ពិនិត្យការលោតតម្លៃភ្លាមៗខុសធម្មតា (> $35 ក្នុងរយៈពេលក្រោម 20 វិនាទី)
+    if _last_quote_state["price"] > 1000 and (now - _last_quote_state["ts"]) < 20.0:
+        jump = abs(live_price - _last_quote_state["price"])
+        if jump > 35.0:
+            spike_glitch = True
+            spike_note = f"តម្លៃលោតខុសធម្មតា ${jump:.2f} ភ្លាមៗ"
+    if live_price > 1000 and not spike_glitch:
+        _last_quote_state = {"price": live_price, "ts": now}
+
+    # 2) ផ្ទៀងផ្ទាត់តម្លៃរវាងប្រភពច្រើន (Swissquote vs Binance vs OKX)
+    cross = cache.get_or_fetch("cross_sanity", 12.0, _fetch_cross_prices_raw) or {}
+    adjusted = []
+    if "swissquote" in cross:
+        adjusted.append(cross["swissquote"])
+    if "binance" in cross:
+        adjusted.append(cross["binance"] + basis)
+    if "okx" in cross:
+        adjusted.append(cross["okx"] + basis)
+
+    max_dev = 0.0
+    cross_glitch = False
+    cross_note = "ទិន្នន័យតម្លៃស្របគ្នាល្អ"
+
+    if len(adjusted) >= 2 and live_price > 1000:
+        med = float(np.median(adjusted))
+        max_dev = round(abs(live_price - med), 2)
+        # បើតម្លៃខុសពី Median នៃប្រភពផ្សេងលើស $25 → មានហានិភ័យ Feed Glitch
+        if max_dev > 25.0:
+            cross_glitch = True
+            cross_note = f"តម្លៃខុសគ្នារវាងប្រភព ${max_dev:.2f}"
+
+    glitch = spike_glitch or cross_glitch
+    return {
+        "ok": not glitch,
+        "glitch_detected": glitch,
+        "deviation": max_dev,
+        "sources_checked": len(adjusted),
+        "note": spike_note if spike_glitch else cross_note,
+    }
 
 
 # ==================== CANDLE DATA FETCHERS ====================
@@ -238,7 +451,7 @@ def _fetch_gold_raw(interval: str) -> tuple[pd.DataFrame, str, bool, str] | None
         try:
             gran = {"1m": "M1", "5m": "M5", "15m": "M15", "1h": "H1", "4h": "H4", "1d": "D"}.get(interval, "M5")
             url = f"https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles?granularity={gran}&count={limit}&price=M"
-            res = http_session.get(url, headers={"Authorization": f"Bearer {OANDA_API_KEY}"}, timeout=(3, 5)).json()
+            res = http_session.get(url, headers={"Authorization": f"Bearer {OANDA_API_KEY}"}, timeout=(2.5, 4.5)).json()
             if "candles" in res and len(res["candles"]) > 5:
                 rows = [{
                     "datetime": pd.to_datetime(c["time"], utc=True),
@@ -254,7 +467,7 @@ def _fetch_gold_raw(interval: str) -> tuple[pd.DataFrame, str, bool, str] | None
         try:
             td_int = {"1m": "1min", "5m": "5min", "15m": "15min", "1h": "1h", "4h": "4h", "1d": "1day"}.get(interval, "5min")
             url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval={td_int}&outputsize={limit}&apikey={TWELVE_DATA_KEY}"
-            res = http_session.get(url, timeout=(3, 5)).json()
+            res = http_session.get(url, timeout=(2.5, 4.5)).json()
             if "values" in res and len(res["values"]) > 5:
                 df = pd.DataFrame(res["values"])
                 df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
@@ -270,7 +483,7 @@ def _fetch_gold_raw(interval: str) -> tuple[pd.DataFrame, str, bool, str] | None
     try:
         bn_int = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d"}.get(interval, "5m")
         url = f"https://data-api.binance.vision/api/v3/klines?symbol=PAXGUSDT&interval={bn_int}&limit={limit}"
-        res = http_session.get(url, timeout=(3, 5))
+        res = http_session.get(url, timeout=(2.5, 4.5))
         if res.status_code == 200:
             raw = res.json()
             if isinstance(raw, list) and len(raw) > 5:
@@ -286,9 +499,8 @@ def _fetch_gold_raw(interval: str) -> tuple[pd.DataFrame, str, bool, str] | None
 
     try:
         okx_bar = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1Dutc"}.get(interval, "5m")
-        okx_lim = min(limit, 300)
-        url = f"https://www.okx.com/api/v5/market/candles?instId=XAUT-USDT&bar={okx_bar}&limit={okx_lim}"
-        res = http_session.get(url, timeout=(3, 5))
+        url = f"https://www.okx.com/api/v5/market/candles?instId=XAUT-USDT&bar={okx_bar}&limit={min(limit, 300)}"
+        res = http_session.get(url, timeout=(2.5, 4.5))
         if res.status_code == 200:
             raw = res.json().get("data", [])
             if isinstance(raw, list) and len(raw) > 5:
@@ -338,58 +550,137 @@ def _fetch_gold_raw(interval: str) -> tuple[pd.DataFrame, str, bool, str] | None
 
 
 def fetch_gold_data(interval: str = "5m") -> tuple[pd.DataFrame, str, bool, str]:
-    ttl = 45.0 if (TWELVE_DATA_KEY and not OANDA_API_KEY) else (10.0 if interval == "1m" else 18.0)
+    ttl = 45.0 if (TWELVE_DATA_KEY and not OANDA_API_KEY) else (8.0 if interval == "1m" else 15.0)
     res = cache.get_or_fetch(f"gold_{interval}", ttl, lambda: _fetch_gold_raw(interval))
     if res is None:
         return pd.DataFrame(), "Reconnecting...", False, ""
     return res
 
 
+# ==================== DUAL ECONOMIC CALENDAR (FOREXFACTORY + FINNHUB) ====================
+def _fetch_finnhub_calendar(now_utc: datetime) -> list[dict]:
+    if not FINNHUB_API_KEY:
+        return []
+    out = []
+    try:
+        d_from = (now_utc - timedelta(days=1)).strftime("%Y-%m-%d")
+        d_to = (now_utc + timedelta(days=5)).strftime("%Y-%m-%d")
+        url = f"https://finnhub.io/api/v1/calendar/economic?from={d_from}&to={d_to}&token={FINNHUB_API_KEY}"
+        res = http_session.get(url, timeout=(2.5, 4.0))
+        if res.status_code != 200:
+            return []
+        events = (res.json() or {}).get("economicCalendar") or []
+        for ev in events:
+            country = str(ev.get("country") or "").upper()
+            impact = str(ev.get("impact") or "").lower()
+            if country not in ("US", "USD") or impact not in ("high", "3"):
+                continue
+            t_str = str(ev.get("time") or "").strip()
+            if not t_str:
+                continue
+            try:
+                ev_dt = datetime.fromisoformat(t_str.replace("Z", "+00:00"))
+                ev_dt = ev_dt.replace(tzinfo=timezone.utc) if ev_dt.tzinfo is None else ev_dt.astimezone(timezone.utc)
+            except Exception:
+                continue
+            mins_until = (ev_dt - now_utc).total_seconds() / 60.0
+            if mins_until < -30:
+                continue
+            tinfo = format_dual_time(ev_dt)
+            out.append({
+                "title": ev.get("event") or "USD High-Impact News",
+                "mins_until": round(mins_until),
+                "forecast": str(ev.get("estimate")) if ev.get("estimate") is not None else "--",
+                "previous": str(ev.get("prev")) if ev.get("prev") is not None else "--",
+                "time_kh": tinfo["kh"],
+                "time_ny": tinfo["ny"],
+                "time_utc": tinfo["utc"],
+                "source": "Finnhub",
+            })
+    except Exception:
+        pass
+    return out
+
+
 def _fetch_usd_news_raw() -> dict:
-    url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-    res = http_session.get(url, timeout=(3, 5))
-    res.raise_for_status()
-    events = res.json()
     now_utc = datetime.now(timezone.utc)
     upcoming, danger, danger_event = [], False, None
+    seen_keys = set()
 
-    for ev in events:
-        if ev.get("country") != "USD" or ev.get("impact") != "High":
-            continue
-        date_str = ev.get("date", "")
-        if not date_str:
-            continue
-        try:
-            ev_dt = datetime.fromisoformat(date_str).astimezone(timezone.utc)
-        except Exception:
-            continue
-        mins_until = (ev_dt - now_utc).total_seconds() / 60.0
-        if mins_until < -30:
-            continue
-        item = {
-            "title": ev.get("title", "USD High-Impact News"),
-            "mins_until": round(mins_until),
-            "forecast": ev.get("forecast") or "--",
-            "previous": ev.get("previous") or "--",
-        }
-        if -30 <= mins_until <= 60:
+    def _add_item(item: dict):
+        nonlocal danger, danger_event
+        norm_title = re.sub(r"[^a-z0-9]+", "", item["title"].lower())[:24]
+        key = (norm_title, item["time_utc"])
+        if key in seen_keys:
+            return
+        seen_keys.add(key)
+        if -30 <= item["mins_until"] <= 60:
             danger = True
-            if danger_event is None:
+            if danger_event is None or abs(item["mins_until"]) < abs(danger_event["mins_until"]):
                 danger_event = item
         upcoming.append(item)
 
+    # 1) ForexFactory Primary Feed
+    try:
+        url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+        res = http_session.get(url, timeout=(2.5, 4.5))
+        if res.status_code == 200:
+            for ev in res.json():
+                if ev.get("country") != "USD" or ev.get("impact") != "High":
+                    continue
+                date_str = ev.get("date", "")
+                if not date_str:
+                    continue
+                try:
+                    ev_dt = datetime.fromisoformat(date_str).astimezone(timezone.utc)
+                except Exception:
+                    continue
+                mins_until = (ev_dt - now_utc).total_seconds() / 60.0
+                if mins_until < -30:
+                    continue
+                tinfo = format_dual_time(ev_dt)
+                _add_item({
+                    "title": ev.get("title", "USD High-Impact News"),
+                    "mins_until": round(mins_until),
+                    "forecast": ev.get("forecast") or "--",
+                    "previous": ev.get("previous") or "--",
+                    "time_kh": tinfo["kh"],
+                    "time_ny": tinfo["ny"],
+                    "time_utc": tinfo["utc"],
+                    "source": "ForexFactory",
+                })
+    except Exception as e:
+        print(f"[CALENDAR:FF] {e}")
+
+    # 2) Finnhub Secondary Calendar Merge (Free Tier)
+    for item in _fetch_finnhub_calendar(now_utc):
+        _add_item(item)
+
     upcoming.sort(key=lambda x: x["mins_until"])
-    return {"danger": danger, "danger_event": danger_event, "upcoming": upcoming[:4]}
+    f_time = format_dual_time(now_utc)
+    return {
+        "danger": danger,
+        "danger_event": danger_event,
+        "upcoming": upcoming[:4],
+        "fetched_kh": f_time["kh"],
+        "fetched_ny": f_time["ny"],
+        "fetched_utc": f_time["utc"],
+    }
 
 
 def fetch_usd_news() -> dict:
     res = cache.get_or_fetch("usd_news", 900.0, _fetch_usd_news_raw)
-    return res or {"danger": False, "danger_event": None, "upcoming": []}
+    if res:
+        return res
+    f_time = format_dual_time(datetime.now(timezone.utc))
+    return {
+        "danger": False, "danger_event": None, "upcoming": [],
+        "fetched_kh": f_time["kh"], "fetched_ny": f_time["ny"], "fetched_utc": f_time["utc"]
+    }
 
 
 # ==================== SMART MONEY CONCEPTS (SMC) STRUCTURE ENGINE ====================
 def _dedupe_blocks(blocks: list[dict], min_gap: float, max_items: int) -> list[dict]:
-    """ការពារកុំឲ្យប្រអប់ Order Block ត្រួតជាន់គ្នា រើសយកតែតំបន់ស្អាតៗ"""
     selected: list[dict] = []
     for b in blocks:
         mid = (b["top"] + b["bottom"]) / 2.0
@@ -401,12 +692,6 @@ def _dedupe_blocks(blocks: list[dict], min_gap: float, max_items: int) -> list[d
 
 
 def compute_smc_structure(df: pd.DataFrame) -> dict:
-    """
-    ម៉ាស៊ីន Smart Money Concepts (SMC):
-    - Multi-level Demand Order Blocks / FVG (ប្រអប់ខៀវ) និង Supply Order Blocks (ប្រអប់ក្រហម)
-    - បន្ទាត់ Weak High / Strong High និង Strong Low / Weak Low
-    - បន្ទាត់ដាច់ៗ BOS (Break of Structure) និង CHoCH (Change of Character)
-    """
     n = len(df)
     empty = {"demand_blocks": [], "supply_blocks": [], "levels": [], "breaks": [], "bias": "NEUTRAL"}
     if n < 25:
@@ -421,19 +706,17 @@ def compute_smc_structure(df: pd.DataFrame) -> dict:
     cur_price = float(close[-1])
     last_atr = max(float(atr[-1]), 1.0)
 
-    # ១. រក Swing Highs / Swing Lows (Pivot window = 3)
     w = 3
     last_sh_idx, last_sh_val = 0, float(high[0])
     last_sl_idx, last_sl_val = 0, float(low[0])
     sh_broken, sl_broken = False, False
-    trend = 0  # 1 = Bullish, -1 = Bearish
+    trend = 0
 
     breaks: list[dict] = []
     raw_demand: list[dict] = []
     raw_supply: list[dict] = []
 
     for i in range(w, n):
-        # ពិនិត្យ Pivot នៅទីតាំង p = i - w
         p = i - w
         if p >= w:
             if high[p] == np.max(high[p - w:p + w + 1]):
@@ -443,7 +726,6 @@ def compute_smc_structure(df: pd.DataFrame) -> dict:
                 last_sl_idx, last_sl_val = p, float(low[p])
                 sl_broken = False
 
-        # Break Above Swing High -> BOS UP ឬ CHoCH UP + បង្កើត Demand OB
         if not sh_broken and close[i] > last_sh_val and (i - last_sh_idx) >= 2:
             sh_broken = True
             is_choch = (trend == -1)
@@ -455,7 +737,6 @@ def compute_smc_structure(df: pd.DataFrame) -> dict:
                 "type": "CHoCH_UP" if is_choch else "BOS_UP",
                 "label": "CHoCH" if is_choch else "BOS",
             })
-            # រកទៀនក្រហមចុងក្រោយមុនការហក់ឡើង (Bullish Order Block)
             seg_start = max(0, last_sl_idx - 2)
             ob_idx = last_sl_idx
             for k in range(i - 1, seg_start - 1, -1):
@@ -471,7 +752,6 @@ def compute_smc_structure(df: pd.DataFrame) -> dict:
                 "top": ob_top, "bottom": ob_bot, "label": "OB"
             })
 
-        # Break Below Swing Low -> BOS DN ឬ CHoCH DN + បង្កើត Supply OB
         if not sl_broken and close[i] < last_sl_val and (i - last_sl_idx) >= 2:
             sl_broken = True
             is_choch = (trend == 1)
@@ -480,7 +760,7 @@ def compute_smc_structure(df: pd.DataFrame) -> dict:
                 "start_time": timestamps[last_sl_idx],
                 "end_time": timestamps[i],
                 "price": safe_float(last_sl_val),
-                "type": "CHoCH_DN" if is_choch else "BOS_DN",
+                "type": "CHoCH_DOWN" if is_choch else "BOS_DOWN",
                 "label": "CHoCH" if is_choch else "BOS",
             })
             seg_start = max(0, last_sh_idx - 2)
@@ -498,7 +778,6 @@ def compute_smc_structure(df: pd.DataFrame) -> dict:
                 "top": ob_top, "bottom": ob_bot, "label": "OB"
             })
 
-        # ២. បន្ថែម Fair Value Gaps (FVG) ដែលមានទំហំសំខាន់
         if i >= 2:
             gap_up = low[i] - high[i - 2]
             if gap_up >= last_atr * 0.35:
@@ -513,11 +792,9 @@ def compute_smc_structure(df: pd.DataFrame) -> dict:
                     "top": safe_float(low[i - 2]), "bottom": safe_float(high[i]), "label": "FVG"
                 })
 
-    # ៣. ចម្រាញ់យកតែ Order Block / FVG ដែលមិនទាន់បែក (Unmitigated)
     active_demand = []
     for b in reversed(raw_demand):
         idx = b["idx"]
-        # មិនទាន់ត្រូវទៀនបិទទម្លុះចុះក្រោម និងស្ថិតនៅក្រោមឬកៀកតម្លៃបច្ចុប្បន្ន
         if b["bottom"] <= cur_price + last_atr * 0.4:
             after_closes = close[idx + 1:]
             if len(after_closes) == 0 or float(np.min(after_closes)) >= b["bottom"] - last_atr * 0.15:
@@ -540,7 +817,6 @@ def compute_smc_structure(df: pd.DataFrame) -> dict:
     demand_blocks = _dedupe_blocks(active_demand, min_gap=last_atr * 1.1, max_items=4)
     supply_blocks = _dedupe_blocks(active_supply, min_gap=last_atr * 1.1, max_items=3)
 
-    # ៤. កំណត់បន្ទាត់ Weak High / Strong High និង Strong Low / Weak Low (ដូច TradingView SMC)
     look = min(100, n)
     offset = n - look
     hi_idx = offset + int(np.argmax(high[offset:]))
@@ -567,7 +843,7 @@ def compute_smc_structure(df: pd.DataFrame) -> dict:
     }
 
 
-# ==================== PRECISION BUY/SELL + DEMAND ZONE ENGINE ====================
+# ==================== CLEAN TREND-FILTERED BUY/SELL + DEMAND ZONE ENGINE ====================
 def generate_chart_signals(df: pd.DataFrame) -> tuple[list[dict], dict | None, dict]:
     n = len(df)
     if n < 20:
@@ -577,11 +853,13 @@ def generate_chart_signals(df: pd.DataFrame) -> tuple[list[dict], dict | None, d
     high = df["high"].to_numpy(dtype=float)
     low = df["low"].to_numpy(dtype=float)
     close = df["close"].to_numpy(dtype=float)
+    ema20 = np.nan_to_num(df["ema20"].to_numpy(dtype=float), nan=close)
+    ema50 = np.nan_to_num(df["ema50"].to_numpy(dtype=float), nan=close)
     atr = np.nan_to_num(df["atr"].to_numpy(dtype=float), nan=1.0, posinf=1.0, neginf=1.0)
     rsi = np.nan_to_num(df["rsi"].to_numpy(dtype=float), nan=50.0, posinf=50.0, neginf=50.0)
     timestamps = [int(pd.Timestamp(t).timestamp()) for t in df["datetime"]]
 
-    mult = 1.45
+    mult = 1.65
     hl2 = (high + low) / 2.0
     upper_basic = hl2 + mult * atr
     lower_basic = hl2 - mult * atr
@@ -607,32 +885,38 @@ def generate_chart_signals(df: pd.DataFrame) -> tuple[list[dict], dict | None, d
     for i in range(14, n):
         ts = timestamps[i]
         cur_atr = max(float(atr[i]), 0.8)
-
         bar_range = max(high[i] - low[i], 0.01)
-        is_st_buy = (direction[i] == 1 and direction[i - 1] == -1)
+
+        has_momentum = bar_range >= cur_atr * 0.45
+
+        is_st_buy = (direction[i] == 1 and direction[i - 1] == -1 and close[i] > ema20[i] and has_momentum)
         is_rev_buy = (
-            i - last_sig_idx >= 5
+            i - last_sig_idx >= 6
             and last_sig_side != "BUY"
-            and rsi[i] < 40
-            and low[i] <= np.min(low[max(0, i - 8):i + 1]) * 1.0003
+            and has_momentum
+            and rsi[i] < 34
+            and low[i] <= np.min(low[max(0, i - 10):i + 1]) * 1.0003
             and close[i] > open_p[i]
-            and (close[i] - low[i]) > bar_range * 0.55
+            and (close[i] - low[i]) > bar_range * 0.60
+            and close[i] >= ema50[i] - cur_atr * 1.5
         )
 
-        is_st_sell = (direction[i] == -1 and direction[i - 1] == 1)
+        is_st_sell = (direction[i] == -1 and direction[i - 1] == 1 and close[i] < ema20[i] and has_momentum)
         is_rev_sell = (
-            i - last_sig_idx >= 5
+            i - last_sig_idx >= 6
             and last_sig_side != "SELL"
-            and rsi[i] > 60
-            and high[i] >= np.max(high[max(0, i - 8):i + 1]) * 0.9997
+            and has_momentum
+            and rsi[i] > 66
+            and high[i] >= np.max(high[max(0, i - 10):i + 1]) * 0.9997
             and close[i] < open_p[i]
-            and (high[i] - close[i]) > bar_range * 0.55
+            and (high[i] - close[i]) > bar_range * 0.60
+            and close[i] <= ema50[i] + cur_atr * 1.5
         )
 
-        if (is_st_buy or is_rev_buy) and (i - last_sig_idx >= 3):
+        if (is_st_buy or is_rev_buy) and (i - last_sig_idx >= 4):
             entry_p = safe_float(close[i])
-            sl_p = safe_float(min(low[i] - cur_atr * 0.7, entry_p - cur_atr * 1.3))
-            risk = max(entry_p - sl_p, 0.8)
+            sl_p = safe_float(min(low[i] - cur_atr * 0.7, entry_p - max(cur_atr * 1.3, 1.8)))
+            risk = max(entry_p - sl_p, 1.2)
             tp1_p = safe_float(entry_p + risk * 2.0)
             tp2_p = safe_float(entry_p + risk * 3.0)
             signals.append({
@@ -647,10 +931,10 @@ def generate_chart_signals(df: pd.DataFrame) -> tuple[list[dict], dict | None, d
             last_sig_side = "BUY"
             continue
 
-        if (is_st_sell or is_rev_sell) and (i - last_sig_idx >= 3):
+        if (is_st_sell or is_rev_sell) and (i - last_sig_idx >= 4):
             entry_p = safe_float(close[i])
-            sl_p = safe_float(max(high[i] + cur_atr * 0.7, entry_p + cur_atr * 1.3))
-            risk = max(sl_p - entry_p, 0.8)
+            sl_p = safe_float(max(high[i] + cur_atr * 0.7, entry_p + max(cur_atr * 1.3, 1.8)))
+            risk = max(sl_p - entry_p, 1.2)
             tp1_p = safe_float(entry_p - risk * 2.0)
             tp2_p = safe_float(entry_p - risk * 3.0)
             signals.append({
@@ -667,29 +951,26 @@ def generate_chart_signals(df: pd.DataFrame) -> tuple[list[dict], dict | None, d
 
         if active_trade and not active_trade["tp1_hit"] and not active_trade["sl_hit"]:
             if active_trade["side"] == "BUY":
-                if high[i] >= active_trade["tp1"]:
-                    active_trade["tp1_hit"] = True
-                    signals.append({"time": ts, "price": safe_float(high[i]), "type": "TP1", "label": "TP1", "sublabel": ""})
-                    continue
-                elif low[i] <= active_trade["sl"]:
+                if low[i] <= active_trade["sl"]:
                     active_trade["sl_hit"] = True
                     signals.append({"time": ts, "price": safe_float(low[i]), "type": "SL", "label": "SL", "sublabel": ""})
                     continue
-            else:
-                if low[i] <= active_trade["tp1"]:
+                elif high[i] >= active_trade["tp1"]:
                     active_trade["tp1_hit"] = True
-                    signals.append({"time": ts, "price": safe_float(low[i]), "type": "TP1", "label": "TP1", "sublabel": ""})
+                    signals.append({"time": ts, "price": safe_float(high[i]), "type": "TP1", "label": "TP1", "sublabel": ""})
                     continue
-                elif high[i] >= active_trade["sl"]:
+            else:
+                if high[i] >= active_trade["sl"]:
                     active_trade["sl_hit"] = True
                     signals.append({"time": ts, "price": safe_float(high[i]), "type": "SL", "label": "SL", "sublabel": ""})
                     continue
+                elif low[i] <= active_trade["tp1"]:
+                    active_trade["tp1_hit"] = True
+                    signals.append({"time": ts, "price": safe_float(low[i]), "type": "TP1", "label": "TP1", "sublabel": ""})
+                    continue
 
     lookback = min(45, n)
-    rec_low = low[-lookback:]
-    rec_high = high[-lookback:]
-    rec_open = open_p[-lookback:]
-    rec_close = close[-lookback:]
+    rec_low, rec_high, rec_open, rec_close = low[-lookback:], high[-lookback:], open_p[-lookback:], close[-lookback:]
     last_atr = max(float(atr[-1]), 1.0)
 
     low_idx = int(np.argmin(rec_low))
@@ -705,7 +986,7 @@ def generate_chart_signals(df: pd.DataFrame) -> tuple[list[dict], dict | None, d
         "supply": {"top": supply_top, "bottom": supply_bottom}
     }
 
-    return signals[-24:], active_trade, zones
+    return signals[-20:], active_trade, zones
 
 
 # ==================== ANALYSIS ENGINE ====================
@@ -748,7 +1029,7 @@ def _compute_mtf_raw() -> dict:
     items, buy_cnt, sell_cnt = {}, 0, 0
     for code, label in tfs:
         try:
-            df, _, _, _ = futures[code].result(timeout=10)
+            df, _, _, _ = futures[code].result(timeout=8)
         except (FuturesTimeout, Exception):
             df = pd.DataFrame()
         res = compute_tf_bias(df)
@@ -782,7 +1063,7 @@ def _compute_mtf_raw() -> dict:
 
 
 def get_mtf_confluence() -> dict:
-    res = cache.get_or_fetch("mtf", 60.0, _compute_mtf_raw)
+    res = cache.get_or_fetch("mtf", 45.0, _compute_mtf_raw)
     return res or {"timeframes": [], "verdict": "SYNC", "aligned": "MIXED", "warning": None, "buy_count": 0, "sell_count": 0}
 
 
@@ -811,10 +1092,7 @@ def get_institutional_levels(basis: float = 0.0) -> dict:
     raw = cache.get_or_fetch("inst_levels_raw", 60.0, _compute_inst_levels_raw)
     if not raw:
         return {"pdh": None, "pdl": None, "asian_high": None, "asian_low": None}
-    return {
-        k: (safe_float(v + basis) if v is not None else None)
-        for k, v in raw.items()
-    }
+    return {k: (safe_float(v + basis) if v is not None else None) for k, v in raw.items()}
 
 
 def detect_candle_pattern(df: pd.DataFrame) -> dict:
@@ -847,6 +1125,10 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
     df = df.copy()
     for col in ("open", "high", "low", "close"):
         df[col] = pd.to_numeric(df[col], errors="coerce")
+    if "volume" not in df.columns:
+        df["volume"] = 0.0
+    else:
+        df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0)
     df = df.dropna(subset=["open", "high", "low", "close"]).reset_index(drop=True)
 
     df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
@@ -876,7 +1158,6 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
     ], axis=1).max(axis=1)
     df["atr"] = tr.rolling(window=14).mean().bfill().fillna(2.0)
 
-    # គណនាទាំង Signal ទៀន និង Smart Money Concepts (OB, FVG, Weak High, Strong Low, BOS, CHoCH)
     df_plot = df.tail(150).reset_index(drop=True)
     chart_signals, active_signal, zones = generate_chart_signals(df_plot)
     smc = compute_smc_structure(df_plot)
@@ -928,8 +1209,6 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
         rsi_status = "NEUTRAL"
         reasons.append(f"RSI ({rsi}) នៅតំបន់មានលំនឹង")
 
-    bb_status = "SELL" if price >= bb_upper * 0.999 else ("BUY" if price <= bb_lower * 1.001 else "NEUTRAL")
-
     if score >= 3:
         signal, confidence = "STRONG BUY", 86
     elif score >= 1:
@@ -942,31 +1221,20 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
         signal, confidence = "NEUTRAL", 50
 
     if active_signal:
-        entry_val = active_signal["entry"]
-        sl = active_signal["sl"]
-        tp1 = active_signal["tp1"]
-        tp2 = active_signal["tp2"]
-        rr_txt = active_signal["rr"]
-        side_txt = active_signal["side"]
+        entry_val, sl, tp1, tp2, rr_txt = active_signal["entry"], active_signal["sl"], active_signal["tp1"], active_signal["tp2"], active_signal["rr"]
         e_low, e_high = safe_float(min(price, entry_val)), safe_float(max(price, entry_val))
-        action_text = f"សញ្ញាក្រាហ្វិកសកម្ម៖ {side_txt} នៅ ${entry_val} (SL: ${sl} | TP1: ${tp1})"
+        action_text = f"សញ្ញាក្រាហ្វិកសកម្ម៖ {active_signal['side']} នៅ ${entry_val} (SL: ${sl} | TP1: ${tp1})"
     elif "BUY" in signal:
-        entry_val = price
-        e_low, e_high = safe_float(min(price, ema20)), price
-        sl, tp1, tp2 = safe_float(price - atr * 1.4), safe_float(price + atr * 2.8), safe_float(price + atr * 4.0)
-        rr_txt = "2 : 1"
+        entry_val, e_low, e_high = price, safe_float(min(price, ema20)), price
+        sl, tp1, tp2, rr_txt = safe_float(price - atr * 1.4), safe_float(price + atr * 2.8), safe_float(price + atr * 4.0), "2 : 1"
         action_text = f"រង់ចាំចូល BUY ក្នុងតំបន់ ${e_low} - ${e_high} ដោយមានទៀនបញ្ជាក់"
     elif "SELL" in signal:
-        entry_val = price
-        e_low, e_high = price, safe_float(max(price, ema20))
-        sl, tp1, tp2 = safe_float(price + atr * 1.4), safe_float(price - atr * 2.8), safe_float(price - atr * 4.0)
-        rr_txt = "2 : 1"
+        entry_val, e_low, e_high = price, price, safe_float(max(price, ema20))
+        sl, tp1, tp2, rr_txt = safe_float(price + atr * 1.4), safe_float(price - atr * 2.8), safe_float(price - atr * 4.0), "2 : 1"
         action_text = f"រង់ចាំចូល SELL ក្នុងតំបន់ ${e_low} - ${e_high} ពេលតម្លៃងើបប៉ះ EMA 20"
     else:
-        entry_val = price
-        e_low, e_high = support, resistance
-        sl, tp1, tp2 = safe_float(support - atr), resistance, safe_float(resistance + atr)
-        rr_txt = "1.5 : 1"
+        entry_val, e_low, e_high = price, support, resistance
+        sl, tp1, tp2, rr_txt = safe_float(support - atr), resistance, safe_float(resistance + atr), "1.5 : 1"
         action_text = "ទីផ្សារកំពុងរត់ទទឹង (Sideway) — គួររង់ចាំ Breakout សិន"
 
     matrix = [
@@ -989,6 +1257,7 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
             "time": ts,
             "open": safe_float(row["open"]), "high": safe_float(row["high"]),
             "low": safe_float(row["low"]), "close": safe_float(row["close"]),
+            "volume": safe_float(row["volume"], 0.0, 4),
         })
         ema20_line.append({"time": ts, "value": safe_float(row["ema20"], price)})
         ema50_line.append({"time": ts, "value": safe_float(row["ema50"], price)})
@@ -1012,28 +1281,38 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
 
 
 def _evaluate_brain_v8(payload: dict, basis: float = 0.0) -> dict:
-    """ទាញទៀន 1H (260 ទៀន) តម្រឹមតម្លៃ Forex Spot រួចបញ្ជូនទៅខួរក្បាល V8"""
     df_1h, _, _, raw_1h = fetch_gold_data("1h")
     if df_1h is not None and not df_1h.empty:
         df_1h = df_1h.copy()
         if basis != 0.0 and raw_1h not in ("OANDA", "TWELVE"):
             for col in ("open", "high", "low", "close"):
                 df_1h[col] = df_1h[col] + basis
-    return brain_service.evaluate(df_1h, payload, session=http_session)
+    return brain_service.evaluate(df_1h, payload)
 
 
 def attach_extras_sync(payload: dict) -> dict:
-    """បន្ថែម MTF, USD News, Institutional Levels, និងខួរក្បាល V8 + ព័ត៌មានសង្គ្រាម/ពិភពលោក"""
     out = dict(payload)
     basis = float(out.get("basis_offset") or 0.0)
-    out["mtf"] = get_mtf_confluence()
-    out["news"] = fetch_usd_news()
-    out["inst_levels"] = get_institutional_levels(basis)
+    price = float(out.get("price") or 0.0)
+
+    # ទាញទិន្នន័យជំនួយទាំង ៥ ដំណាលគ្នាដើម្បីកាត់បន្ថយ Latency
+    f_mtf = extras_executor.submit(get_mtf_confluence)
+    f_news = extras_executor.submit(fetch_usd_news)
+    f_inst = extras_executor.submit(get_institutional_levels, basis)
+    f_flow = extras_executor.submit(fetch_order_flow)
+    f_san = extras_executor.submit(check_cross_source_sanity, price, basis)
+
+    out["mtf"] = f_mtf.result()
+    out["news"] = f_news.result()
+    out["inst_levels"] = f_inst.result()
+    out["order_flow"] = f_flow.result()
+    out["sanity"] = f_san.result()
     out["brain"] = _evaluate_brain_v8(out, basis=basis)
     return out
 
 
-def build_full_payload_sync(interval: str, include_extras: bool = True) -> dict | None:
+def _build_full_payload_uncached(interval: str, include_extras: bool = True) -> dict | None:
+    global _last_valid_basis
     df, source, is_spot, raw_feed = fetch_gold_data(interval)
     if df.empty or len(df) < 5:
         return None
@@ -1041,24 +1320,31 @@ def build_full_payload_sync(interval: str, include_extras: bool = True) -> dict 
     df = df.copy()
     basis = 0.0
 
-    # Auto-Calibrate ទៀនឲ្យត្រូវតម្លៃ Forex Spot XAU/USD ពិត (ដូច TradingView/MT5)
     if quote and quote["price"] > 0:
         live_p = quote["price"]
         raw_last = float(df.iloc[-1]["close"])
-        if quote.get("is_forex") and raw_feed not in ("OANDA", "TWELVE"):
-            cand_basis = live_p - raw_last
-            if abs(cand_basis) < 120:
-                basis = cand_basis
+        if raw_feed not in ("OANDA", "TWELVE"):
+            if quote.get("is_forex"):
+                cand_basis = live_p - raw_last
+                if abs(cand_basis) < 120:
+                    basis = cand_basis
+                    with _basis_lock:
+                        _last_valid_basis = basis
+                source = quote.get("feed", "Forex Spot Live • XAU/USD")
+                is_spot = True
+            else:
+                with _basis_lock:
+                    basis = _last_valid_basis
+            if basis != 0.0:
                 for col in ("open", "high", "low", "close"):
                     df[col] = df[col] + basis
-            source = quote.get("feed", "Forex Spot Live • XAU/USD")
-            is_spot = True
 
-        df.iloc[-1, df.columns.get_loc("close")] = live_p
-        if live_p > df.iloc[-1]["high"]:
-            df.iloc[-1, df.columns.get_loc("high")] = live_p
-        if live_p < df.iloc[-1]["low"]:
-            df.iloc[-1, df.columns.get_loc("low")] = live_p
+        target_p = live_p if (quote.get("is_forex") or raw_feed in ("OANDA", "TWELVE")) else (live_p + basis)
+        df.iloc[-1, df.columns.get_loc("close")] = target_p
+        if target_p > df.iloc[-1]["high"]:
+            df.iloc[-1, df.columns.get_loc("high")] = target_p
+        if target_p < df.iloc[-1]["low"]:
+            df.iloc[-1, df.columns.get_loc("low")] = target_p
 
     payload = calculate_indicators(df)
     payload["source"] = source
@@ -1077,7 +1363,27 @@ def build_full_payload_sync(interval: str, include_extras: bool = True) -> dict 
     return payload
 
 
-# ==================== RENDER-SAFE HYBRID TURBO BROADCASTER ====================
+def build_full_payload_sync(interval: str, include_extras: bool = True) -> dict | None:
+    """Shared short-TTL cache: បើកច្រើន Tab ព្រមគ្នាក៏ Server គណនាតែ ១ ដង"""
+    if include_extras:
+        return cache.get_or_fetch(f"full_payload_{interval}", 6.0, lambda: _build_full_payload_uncached(interval, True))
+    return _build_full_payload_uncached(interval, False)
+
+
+# ==================== HIGH-SPEED CONCURRENT BROADCASTER + WARMUP ====================
+def _warmup_caches():
+    try:
+        fetch_live_quote()
+        fetch_gold_data("15m")
+        fetch_gold_data("1h")
+        fetch_usd_news()
+        fetch_order_flow()
+        brain_service.fetch_fred_macro()
+        print("[WARMUP] Core gold, Order Flow & FRED feeds pre-warmed (V10.4)")
+    except Exception as e:
+        print(f"[WARMUP] skipped: {e}")
+
+
 async def broadcast_loop():
     cycle = 0
     while True:
@@ -1090,16 +1396,19 @@ async def broadcast_loop():
             if not clients:
                 continue
 
-            # អាប់ដេតទៀន SMC សញ្ញា និងខួរក្បាល V8 រៀងរាល់ ៣០ វិនាទី
-            if cycle % 12 == 0:
-                unique_tfs = set(tf for _, tf in clients)
-                tf_payloads = {}
-                for tf in unique_tfs:
-                    tf_payloads[tf] = await asyncio.to_thread(build_full_payload_sync, tf, True)
-                for ws, tf in clients:
-                    data = tf_payloads.get(tf)
-                    if data:
-                        await manager.safe_send(ws, data)
+            # អាប់ដេត Full Snapshot + AI Quant Sniper រៀងរាល់ 15 វិនាទី (Parallel គ្រប់ TF)
+            if cycle % 6 == 0:
+                unique_tfs = list(set(tf for _, tf in clients))
+                results = await asyncio.gather(
+                    *(asyncio.to_thread(build_full_payload_sync, tf, True) for tf in unique_tfs),
+                    return_exceptions=True,
+                )
+                tf_payloads = {
+                    tf: res for tf, res in zip(unique_tfs, results)
+                    if isinstance(res, dict)
+                }
+                pairs = [(ws, tf_payloads[tf]) for ws, tf in clients if tf in tf_payloads]
+                await manager.broadcast_many(pairs, timeout=3.5)
                 continue
 
             quote = await asyncio.to_thread(fetch_live_quote)
@@ -1113,12 +1422,10 @@ async def broadcast_loop():
                     "is_forex": bool(quote.get("is_forex")),
                     "ts": int(time.time())
                 }
-                for ws, _ in clients:
-                    await manager.safe_send(ws, tick_msg)
+                await manager.broadcast_many([(ws, tick_msg) for ws, _ in clients], timeout=2.0)
 
             if cycle % 10 == 0:
-                for ws, _ in clients:
-                    await manager.safe_send(ws, {"type": "ping"})
+                await manager.broadcast_many([(ws, {"type": "ping"}) for ws, _ in clients], timeout=2.0)
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -1128,19 +1435,21 @@ async def broadcast_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    threading.Thread(target=_warmup_caches, daemon=True).start()
     task = asyncio.create_task(broadcast_loop())
     try:
         yield
     finally:
         task.cancel()
         mtf_executor.shutdown(wait=False)
+        extras_executor.shutdown(wait=False)
         http_session.close()
 
 
-app = FastAPI(title="TRI PISAL • Gold XAU/USD Pro Terminal (V8 SMC AI)", lifespan=lifespan)
+app = FastAPI(title="TRI PISAL • Gold XAU/USD Pro Terminal (V10.4 Institutional Quant)", lifespan=lifespan)
 
 
-# ==================== AI CHAT ENGINE (INTEGRATED WITH V8 + SMC + WAR NEWS) ====================
+# ==================== AI CHAT ENGINE (V10.4) ====================
 def generate_ai_reply(
     preset: str, data: dict, interval: str,
     mtf: dict, news: dict, inst: dict, brain: dict | None = None
@@ -1152,22 +1461,32 @@ def generate_ai_reply(
     gnews = brain.get("global_news") or {}
     wnews = brain.get("war_news") or {}
     macro = brain.get("macro") or {}
+    fred = brain.get("fred_macro") or {}
+    pillars = brain.get("pillars") or {}
+    stats = brain.get("signal_stats") or {}
+    oflow = data.get("order_flow") or {}
 
     if preset == "brain_v8":
         rank_txt = f"{brain['ai_rank_pct']}%" if brain.get("ai_rank_pct") is not None else "--"
+        wr_txt = f"{stats['tf_win_rate']}% ({interval})" if stats.get("tf_win_rate") is not None else (f"{stats['win_rate']}% រួម" if stats.get("win_rate") is not None else "កំពុងប្រមូលស្ថិតិ")
         lines = [
-            f"សេចក្តីសម្រេច V8៖ **{brain.get('action_km', 'កំពុងវិភាគ...')}** (AI Rank: **{rank_txt}** | Score: **{brain.get('confidence_score', '--')}%**)",
-            f"ព័ត៌មានពិភពលោក៖ **{gnews.get('bias', 'NEUTRAL')}** (Score {gnews.get('score', 0):+.2f}) — {gnews.get('summary_km', '')}",
-            f"ហានិភ័យសង្គ្រាម/ភូមិសាស្ត្រ៖ **{wnews.get('level', 'LOW')}** — {wnews.get('summary_km', 'ស្ងប់ស្ងាត់')}",
-            f"ម៉ាក្រូពិភពលោក៖ DXY **{macro.get('dxy') or '--'}** | US10Y **{macro.get('us10y') or '--'}%** | VIX **{macro.get('vix') or '--'}**",
+            f"សេចក្តីសម្រេច V10.4៖ **{brain.get('action_km', 'កំពុងវិភាគ...')}** (AI Rank: **{rank_txt}** | Score: **{brain.get('confidence_score', '--')}%**)",
+            f"Order Flow ផ្ទាល់ ({oflow.get('source', 'LIVE')})៖ កម្លាំងទិញ **{brain.get('buy_pressure_pct', 50)}%** | ស្ថិតិ Win Rate៖ **{wr_txt}**",
+            f"FRED Macro ({fred.get('bias', 'NEUTRAL')})៖ US10Y **{macro.get('us10y') or '--'}%** | Real10Y **{macro.get('real10') or '--'}%** | CPI **{macro.get('cpi_yoy') or '--'}%** | Fed **{macro.get('fed_rate') or '--'}%**",
+            f"ព័ត៌មានពិភពលោក៖ **{gnews.get('bias', 'NEUTRAL')}** | សង្គ្រាម៖ **{wnews.get('level', 'LOW')}** | DXY **{macro.get('dxy') or '--'}**",
         ]
-        if brain.get("plan"):
-            pl = brain["plan"]
-            lines.append(f"ផែនការ V8៖ Entry **${pl['entry']}** ({pl.get('entry_km', '')}) | SL **${pl['sl']}** | TP1 **${pl['tp']}**")
-        for r in (brain.get("reasons") or [])[:3]:
+        if pillars:
+            v8p = pillars.get("v8_ai", {})
+            stp = pillars.get("structure_smc", {})
+            mcp = pillars.get("macro_news", {})
+            lines.append(f"ពិន្ទុ ៣ សសរស្តម្ភ៖ V8 ({v8p.get('buy',0)}/{v8p.get('sell',0)}) • SMC ({stp.get('buy',0)}/{stp.get('sell',0)}) • Macro ({mcp.get('buy',0)}/{mcp.get('sell',0)})")
+        pl = brain.get("plan") or brain.get("preview_plan")
+        if pl:
+            lines.append(f"ផែនការ៖ Entry **${pl['entry']}** | SL **${pl['sl']}** | TP1 **${pl['tp']}** | BE @ **${pl.get('be_trigger', '--')}**")
+        for r in (brain.get("reasons") or [])[:2]:
             lines.append(f"មូលហេតុ៖ {r}")
         return {
-            "title": f"ខួរក្បាល AI V8 • SMC & ព័ត៌មានពិភពលោក ({brain.get('bar_time') or '1H'})",
+            "title": f"ខួរក្បាល AI V10.4 Quant • FRED + Order Flow + SMC ({brain.get('bar_time') or '1H'})",
             "badge": brain.get("status", "WAIT"),
             "lines": lines
         }
@@ -1182,30 +1501,31 @@ def generate_ai_reply(
         return {"title": "ផ្ទៀងផ្ទាត់ 4 Timeframes (MTF Confluence)", "badge": mtf["verdict"], "lines": lines}
 
     if preset == "news_check":
-        g_line = f"ព័ត៌មានមាសពិភពលោក៖ **{gnews.get('bias', 'NEUTRAL')}** ({gnews.get('score', 0):+.2f}) — {gnews.get('summary_km', '')}"
-        w_line = f"ព័ត៌មានសង្គ្រាម/ជម្លោះ៖ **{wnews.get('level', 'LOW')}** — {wnews.get('summary_km', 'គ្មានការរីករាលដាលថ្មី')}"
+        g_line = f"ព័ត៌មានមាសពិភពលោក៖ **{gnews.get('bias', 'NEUTRAL')}** ({gnews.get('updated_at', '')})"
+        w_line = f"ព័ត៌មានសង្គ្រាម៖ **{wnews.get('level', 'LOW')}** ({wnews.get('updated_at', '')})"
+        f_line = f"FRED ម៉ាក្រូអាមេរិក៖ **{fred.get('bias', 'NEUTRAL')}** — {fred.get('summary_km', '')}"
         if news["danger"] and news["danger_event"]:
             ev = news["danger_event"]
             return {
                 "title": "ព្រមានព័ត៌មានសេដ្ឋកិច្ចអាមេរិក (USD RED FOLDER)", "badge": "DANGER",
                 "lines": [
-                    f"ព័ត៌មានជិតដល់៖ **{ev['title']}** (នៅសល់ ~**{ev['mins_until']} នាទី**)",
+                    f"ព័ត៌មានជិតដល់៖ **{ev['title']}** (ម៉ោងកម្ពុជា **{ev.get('time_kh', '--')}** | ក្រៅស្រុក **{ev.get('time_ny', '--')}**)",
                     f"Forecast: **{ev['forecast']}** | Previous: **{ev['previous']}**",
-                    g_line, w_line,
+                    g_line, w_line, f_line,
                     "អនុសាសន៍៖ **ផ្អាកការចូល Order ថ្មីជាបន្ទាន់** ព្រោះមាសអាចលោតខ្លាំង និងរីក Spread។"
                 ]
             }
         if news["upcoming"]:
             nxt = news["upcoming"][0]
             return {
-                "title": "ប្រតិទិន USD • មាសពិភពលោក & សង្គ្រាម", "badge": gnews.get("bias", "SAFE NOW"),
+                "title": "ប្រតិទិន USD • FRED • មាសពិភពលោក & សង្គ្រាម", "badge": gnews.get("bias", "SAFE NOW"),
                 "lines": [
                     "បច្ចុប្បន្ន **គ្មានព័ត៌មានក្រហម USD** ក្នុងរយៈពេល ៦០ នាទីខាងមុខទេ។",
-                    f"ព័ត៌មានធំបន្ទាប់៖ **{nxt['title']}** (ក្នុង ~**{round(nxt['mins_until']/60, 1)} ម៉ោង**)",
-                    g_line, w_line
+                    f"ព័ត៌មានធំបន្ទាប់៖ **{nxt['title']}** (កម្ពុជា **{nxt.get('time_kh', '--')}** | ក្រៅស្រុក **{nxt.get('time_ny', '--')}**)",
+                    g_line, w_line, f_line
                 ]
             }
-        return {"title": "ប្រតិទិន USD • មាសពិភពលោក & សង្គ្រាម", "badge": gnews.get("bias", "CLEAR"), "lines": ["គ្មានព័ត៌មាន USD កម្រិតក្រហមបន្ទាន់ទេ។", g_line, w_line]}
+        return {"title": "ប្រតិទិន USD • FRED • មាសពិភពលោក & សង្គ្រាម", "badge": gnews.get("bias", "CLEAR"), "lines": ["គ្មានព័ត៌មាន USD កម្រិតក្រហមបន្ទាន់ទេ។", g_line, w_line, f_line]}
 
     if preset == "inst_levels":
         return {
@@ -1218,27 +1538,33 @@ def generate_ai_reply(
         }
 
     if preset == "entry":
-        v8_line = f"ខួរក្បាល AI V8៖ **{brain.get('action_km', 'WAIT')}**"
+        v_line = f"ខួរក្បាល AI V10.4៖ **{brain.get('action_km', 'WAIT')}**"
         if brain.get("reasons"):
-            v8_line += f" ({brain['reasons'][0]})"
+            v_line += f" ({brain['reasons'][0]})"
         return {
             "title": f"វិភាគចំណុចចូលជាក់ស្តែង ({interval})", "badge": brain.get("status", f"{sig} • {conf}%"),
             "lines": [
-                v8_line,
-                f"តម្លៃបច្ចុប្បន្ន៖ **${p}** | តំបន់ចូល៖ **{s['entry_zone']}**",
+                v_line,
+                f"តម្លៃបច្ចុប្បន្ន៖ **${p}** | Order Flow ទិញ៖ **{brain.get('buy_pressure_pct', 50)}%** | តំបន់ចូល៖ **{s['entry_zone']}**",
                 mtf["warning"] if mtf["warning"] else f"MTF Confluence៖ **{mtf['verdict']}**",
-                f"ការណែនាំ៖ {s['advice']}។"
+                f"ការណែនាំ៖ {brain.get('hud_hint_km') or s['advice']}។"
             ]
         }
 
     if preset == "risk_plan":
+        pl = brain.get("plan") or brain.get("preview_plan") or s
+        sl_d = pl.get("sl_dist", s["sl_dist"])
+        tp1_v = pl.get("tp", pl.get("tp1", s["tp1"]))
+        tp2_v = pl.get("tp2", s["tp2"])
+        be_v = pl.get("be_trigger", "--")
+        risk_p = pl.get("suggested_risk_pct", 0.75)
         return {
-            "title": f"ផែនការ SL / TP និងដើមទុន ({interval})", "badge": f"R:R {s['rr']}",
+            "title": f"ផែនការ SL / TP និងវិន័យដើមទុន ({interval})", "badge": f"R:R {pl.get('rr', s['rr'])}",
             "lines": [
-                f"ទិសដៅ៖ **{sig}** | Entry៖ **${s['entry']}**",
-                f"Stop Loss៖ **${s['sl']}** (ចម្ងាយ ~${s['sl_dist']} ឬ {int(s['sl_dist'] * 10)} pips)",
-                f"Take Profit 1៖ **${s['tp1']}** | Take Profit 2៖ **${s['tp2']}**",
-                "គន្លឹះ Pro៖ កំណត់ហានិភ័យត្រឹម 0.75%–1% ក្នុង ១ ជើង និងគោរព Stop Loss ជានិច្ច។"
+                f"ទិសដៅ៖ **{brain.get('side') if brain.get('can_trade') else sig}** | Entry៖ **${pl['entry']}** (Risk ណែនាំ៖ **{risk_p}%** នៃដើមទុន)",
+                f"Stop Loss៖ **${pl['sl']}** (ចម្ងាយ ~${sl_d} ឬ {int(float(sl_d) * 10)} pips)",
+                f"Take Profit 1៖ **${tp1_v}** (កាត់ 60%) | Take Profit 2៖ **${tp2_v}**",
+                f"ការពារដើមទុន (Zero-Risk)៖ ពេលដល់ **${be_v}** (50% នៃ TP1) ត្រូវរំកិល SL មកស្មើដើមភ្លាម។"
             ]
         }
 
@@ -1249,7 +1575,7 @@ def generate_ai_reply(
                 f"EMA20 (**${data['ema20']}**) vs EMA50 (**${data['ema50']}**)",
                 f"RSI (14)៖ **{rsi}** | MACD Hist៖ **{data['macd_hist']:+.3f}**",
                 f"Bollinger Bands៖ **${data['bb_lower']}** - **${data['bb_upper']}**",
-                f"Pivot Point៖ **${piv}** | ATR (14)៖ **${atr}**"
+                f"Pivot Point៖ **${piv}** | ATR (14)៖ **${atr}** | Order Flow ទិញ៖ **{oflow.get('buy_pct', 50)}%**"
             ]
         }
 
@@ -1288,10 +1614,10 @@ def generate_ai_reply(
     return {
         "title": f"សង្ខេបទីផ្សារមាសពេញលេញ ({interval})", "badge": brain.get("status", f"{sig} • {conf}%"),
         "lines": [
-            f"ខួរក្បាល AI V8៖ **{brain.get('action_km', 'WAIT')}**",
-            f"តម្លៃផ្ទាល់៖ **${p}** | វគ្គ៖ **{sess['name']}** | ព័ត៌មានពិភពលោក៖ **{gnews.get('bias', 'NEUTRAL')}**",
+            f"ខួរក្បាល AI V10.4៖ **{brain.get('action_km', 'WAIT')}** | Order Flow ទិញ៖ **{brain.get('buy_pressure_pct', 50)}%**",
+            f"តម្លៃផ្ទាល់៖ **${p}** | វគ្គ៖ **{sess['name']}** | FRED៖ **{fred.get('bias', 'NEUTRAL')}** | ព័ត៌មាន៖ **{gnews.get('bias', 'NEUTRAL')}**",
             f"ហានិភ័យសង្គ្រាម៖ **{wnews.get('level', 'LOW')}** | MTF 4-TF៖ **{mtf['verdict']}**",
-            f"អនុសាសន៍៖ {s['advice']} (SL: **${s['sl']}** | TP1: **${s['tp1']}**)"
+            f"អនុសាសន៍៖ {brain.get('hud_hint_km') or s['advice']}"
         ]
     }
 
@@ -1301,7 +1627,10 @@ def generate_ai_reply(
 def health_check():
     return {
         "status": "ok",
+        "version": "10.4-institutional-quant",
         "brain_loaded": brain_service.bundle is not None,
+        "fred_key": bool(os.getenv("FRED_API_KEY")),
+        "finnhub_key": bool(FINNHUB_API_KEY),
         "ts": int(time.time())
     }
 
@@ -1360,10 +1689,11 @@ async def gold_websocket(websocket: WebSocket, interval: str):
             if not ok:
                 return
 
-            full_payload = await asyncio.to_thread(attach_extras_sync, fast_payload)
-            ok = await manager.safe_send(websocket, full_payload, timeout=6.0)
-            if not ok:
-                return
+            full_payload = await asyncio.to_thread(build_full_payload_sync, tf, True)
+            if full_payload:
+                ok = await manager.safe_send(websocket, full_payload, timeout=6.0)
+                if not ok:
+                    return
 
         while True:
             await websocket.receive_text()
@@ -1378,12 +1708,12 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 def serve_home():
-    return FileResponse("static/index.html")
+    return FileResponse("static/index.html", headers=NO_CACHE_HEADERS)
 
 
 @app.get("/demo")
 def serve_demo():
-    return FileResponse("static/demo.html")
+    return FileResponse("static/demo.html", headers=NO_CACHE_HEADERS)
 
 
 if __name__ == "__main__":
