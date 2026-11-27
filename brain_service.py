@@ -1,16 +1,14 @@
 # ==========================================================
-# brain_service.py - V10.4 Institutional Quant Sniper Engine
-# ពង្រឹងបន្ថែម៖
-#   1) FRED Official US Macro Engine (API + Free CSV Fallback)
-#   2) Finnhub News + GDELT + RSS (Word-Boundary + Time-Decay)
-#   3) Real-Time Order Flow Integration + Cross-Source Glitch Gate
-#   4) 4-Layer Institutional Confluence Filter + BE@50%TP1 Plan
-#   5) Fixed SignalWinRateTracker (No Same-Candle Fakeout + Per-TF Stats)
+# brain_service.py - V10.6 Final Hardened Edition
+# ពង្រឹងពេញលេញ៖
+#   1) 10-Year V8 ML Ensemble (LR + LightGBM + CatBoost + Safe Fallback)
+#   2) Live Microstructure + Bullish/Bearish OB Reaction + Buy/Sell Pressure
+#   3) Live Exit Shield (ប្រាប់កាន់បន្ត / យកចំណេញពេលបុក OB / កាត់ខាតឈប់ភ្លាម)
+#   4) Real Fill-Aware Audit Tracker (ដក Spread + Commission ពិត + Atomic JSON Save)
+#   5) Beginner 4-Rule Action Guide + Macro/War/News Concurrent Engine
 # ==========================================================
 import os
 import re
-import csv
-import io
 import json
 import math
 import time
@@ -26,15 +24,18 @@ import pandas as pd
 import requests
 from requests.adapters import HTTPAdapter
 
-import brain_core as core
+try:
+    import brain_core as core
+except Exception as _core_err:
+    core = None
+    print(f"[BRAIN] brain_core unavailable (fallback to Quant Structure): {_core_err}")
 
-BASE_DIR = os.path.dirname(__file__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "models", "gold_brain_v8.pkl")
 EVENTS_CSV = os.path.join(BASE_DIR, "models", "events.csv")
 STATS_PATH = os.path.join(BASE_DIR, "models", "signal_stats.json")
-
-FRED_API_KEY = os.getenv("FRED_API_KEY", "").strip()
-FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "").strip()
+BENCHMARK_LOT = 0.01  # ខ្នាតគោល 0.01 Lot (Frontend អាចសារ៉េ 0.01 - 0.05 បានភ្លាមៗ)
+COMM_PIPS = 0.7       # ថ្លៃ Commission មធ្យម $7/Lot = 0.7 pips លើ XAU/USD
 
 
 def _get_tz(name: str, fallback_hours: int):
@@ -118,12 +119,7 @@ def _format_dual_time(dt_utc: datetime | None) -> dict:
 def _parse_rss_date(date_str: str | None) -> datetime | None:
     if not date_str:
         return None
-    s = str(date_str).strip()
-    if s.isdigit():
-        try:
-            return datetime.fromtimestamp(int(s), tz=timezone.utc)
-        except Exception:
-            pass
+    s = date_str.strip()
     try:
         dt = parsedate_to_datetime(s)
         return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
@@ -205,16 +201,18 @@ GDELT_WAR_API = (
     "&mode=artlist&maxrecords=8&timespan=12h&format=json"
 )
 
-FRED_SERIES = ("DGS10", "DFII10", "CPIAUCSL", "UNRATE", "FEDFUNDS")
 
-
-# ==================== AUTO FORWARD-TEST WIN-RATE TRACKER (FIXED) ====================
+# ==================== REAL FILL-AWARE & COST-ADJUSTED AUDIT TRACKER ====================
 class SignalWinRateTracker:
-    """កត់ត្រាស្វ័យប្រវត្តិ និងវាស់ Win Rate ពិតប្រាកដ (ការពារ Same-Candle Fakeout + បំបែកតាម TF)"""
+    """ចាប់រាល់សញ្ញា BUY/SELL (Market & Limit), រង់ចាំប៉ះតម្លៃពិត (Filled), ដក Spread+Comm, Atomic JSON Save"""
     def __init__(self, path: str = STATS_PATH):
         self.path = path
         self._lock = threading.Lock()
-        self.data = {"wins": 0, "losses": 0, "by_tf": {}, "active": {}, "recent": []}
+        self.data = {
+            "wins": 0, "losses": 0,
+            "gross_win_pips": 0.0, "gross_loss_pips": 0.0,
+            "active": {}, "recent": []
+        }
         self._load()
 
     def _load(self):
@@ -225,100 +223,170 @@ class SignalWinRateTracker:
                 if isinstance(d, dict):
                     self.data["wins"] = int(d.get("wins", 0))
                     self.data["losses"] = int(d.get("losses", 0))
-                    self.data["by_tf"] = d.get("by_tf") if isinstance(d.get("by_tf"), dict) else {}
+                    self.data["gross_win_pips"] = float(d.get("gross_win_pips", 0.0))
+                    self.data["gross_loss_pips"] = float(d.get("gross_loss_pips", 0.0))
                     self.data["active"] = d.get("active") if isinstance(d.get("active"), dict) else {}
                     self.data["recent"] = d.get("recent") if isinstance(d.get("recent"), list) else []
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[AUDIT] load reset (corrupt file): {e}")
 
     def _save(self):
+        """Atomic write: សរសេរចូល .tmp រួច replace ដើម្បីការពារខូច JSON"""
         try:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
-            with open(self.path, "w", encoding="utf-8") as f:
+            tmp_path = f"{self.path}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+            os.replace(tmp_path, self.path)
+        except Exception as e:
+            print(f"[AUDIT] save error: {e}")
+
+    def _pips_to_usd(self, pips: float, lot: float = BENCHMARK_LOT) -> float:
+        return round(pips * (lot * 10.0), 2)
 
     def update_and_record(
-        self, tf: str, price: float, high: float, low: float, candle_ts: int, new_signal: dict | None
+        self, tf: str, price: float, high: float, low: float,
+        new_signal: dict | None, spread: float = 0.30
     ) -> dict:
         changed = False
-        now_ts = int(time.time())
+        now_utc = datetime.now(timezone.utc)
+        now_ts = int(now_utc.timestamp())
+        now_kh = now_utc.astimezone(TZ_KH).strftime("%d/%m %H:%M")
+        # ថ្លៃដើមពិតលើ Broker: Spread + Commission ($7/Lot = 0.7 pips)
+        cost_pips = round((max(0.0, _safe_float(spread, 0.30)) * 10.0) + COMM_PIPS, 1)
+
         with self._lock:
-            # 1) ពិនិត្យជើងកំពុងរត់ថាតើ Hit SL ឬ Hit TP1
             act = self.data["active"].get(tf)
             if act and price > 0:
-                entry_cts = int(act.get("entry_candle_ts", 0))
-                # បើនៅលើទៀនចូលដំបូង ប្រើតែ Live Tick Price កុំឱ្យជាប់ High/Low មុនពេលចូល Order
-                is_same_candle = (entry_cts > 0 and candle_ts > 0 and candle_ts <= entry_cts)
-                hi = price if is_same_candle else (max(price, high) if high > 0 else price)
-                lo = price if is_same_candle else (min(price, low) if low > 0 else price)
+                hi = max(price, high) if high > 0 else price
+                lo = min(price, low) if low > 0 else price
 
-                outcome = None
-                # ពិនិត្យ SL មុន (Conservative Institutional Rule បើទៀនតែមួយប៉ះទាំង SL និង TP)
-                if act["side"] == "BUY":
-                    if lo <= act["sl"]:
-                        outcome = "LOSS"
-                    elif hi >= act["tp"]:
-                        outcome = "WIN"
-                else:
-                    if hi >= act["sl"]:
-                        outcome = "LOSS"
-                    elif lo <= act["tp"]:
-                        outcome = "WIN"
+                # 1) បើជា Limit Order រង់ចាំទាល់តែតម្លៃពិតប៉ះ Entry សិន (ហាមគណនាលុយខ្យល់)
+                if not act.get("filled", True):
+                    if lo <= act["entry"] <= hi:
+                        act["filled"] = True
+                        act["open_kh"] = now_kh
+                        act["ts"] = now_ts
+                        changed = True
+                    elif (now_ts - act.get("ts", now_ts)) > 7200:
+                        self.data["active"].pop(tf, None)
+                        act = None
+                        changed = True
 
-                if outcome:
-                    tf_stat = self.data["by_tf"].setdefault(tf, {"wins": 0, "losses": 0})
-                    if outcome == "WIN":
-                        self.data["wins"] += 1
-                        tf_stat["wins"] += 1
+                # 2) ពិនិត្យលទ្ធផលបិទពិត (Worst-case: បើប៉ះ SL មុន ឬប៉ះទាំងពីរក្នុងទៀនតែមួយ -> LOSS)
+                if act and act.get("filled", True):
+                    outcome, exit_px = None, price
+                    if act["side"] == "BUY":
+                        hit_sl = lo <= act["sl"]
+                        hit_tp = hi >= act["tp"]
+                        if hit_sl:
+                            outcome, exit_px = "LOSS", act["sl"]
+                        elif hit_tp:
+                            outcome, exit_px = "WIN", act["tp"]
                     else:
-                        self.data["losses"] += 1
-                        tf_stat["losses"] += 1
+                        hit_sl = hi >= act["sl"]
+                        hit_tp = lo <= act["tp"]
+                        if hit_sl:
+                            outcome, exit_px = "LOSS", act["sl"]
+                        elif hit_tp:
+                            outcome, exit_px = "WIN", act["tp"]
 
-                    self.data["recent"].insert(0, {
-                        "tf": tf, "side": act["side"], "entry": act["entry"],
-                        "sl": act["sl"], "tp": act["tp"], "result": outcome, "ts": now_ts
-                    })
-                    self.data["recent"] = self.data["recent"][:30]
-                    self.data["active"].pop(tf, None)
-                    changed = True
-                elif (now_ts - act.get("ts", now_ts)) > 86400:
-                    self.data["active"].pop(tf, None)
-                    changed = True
+                    if outcome:
+                        diff = (exit_px - act["entry"]) if act["side"] == "BUY" else (act["entry"] - exit_px)
+                        pips = round((diff * 10.0) - cost_pips, 1)
+                        is_win = pips > 0
+                        if is_win:
+                            self.data["wins"] += 1
+                            self.data["gross_win_pips"] = round(self.data["gross_win_pips"] + pips, 1)
+                        else:
+                            self.data["losses"] += 1
+                            self.data["gross_loss_pips"] = round(self.data["gross_loss_pips"] + abs(pips), 1)
 
-            # 2) កត់ត្រាសញ្ញា Sniper ថ្មី (បើមិនទាន់មានជើងកំពុងរត់លើ TF នេះ)
+                        dur_min = max(1, int((now_ts - act.get("ts", now_ts)) // 60))
+                        self.data["recent"].insert(0, {
+                            "tf": tf, "side": act["side"], "grade": act.get("grade", "B"),
+                            "is_sniper": bool(act.get("is_sniper", False)),
+                            "entry_state": act.get("entry_state", "IN_ZONE"),
+                            "entry": act["entry"], "exit": round(exit_px, 2),
+                            "sl": act["sl"], "tp": act["tp"],
+                            "pips": pips, "usd": self._pips_to_usd(pips),
+                            "result": "WIN" if is_win else "LOSS",
+                            "open_kh": act.get("open_kh", "--"), "close_kh": now_kh,
+                            "dur_min": dur_min, "ts": now_ts,
+                        })
+                        self.data["recent"] = self.data["recent"][:30]
+                        self.data["active"].pop(tf, None)
+                        changed = True
+                    elif (now_ts - act.get("ts", now_ts)) > 86400:
+                        self.data["active"].pop(tf, None)
+                        changed = True
+
+            # 3) ចាប់សញ្ញា BUY/SELL ថ្មីចូលតាមដានស្វ័យប្រវត្តិ (ទាំង Market & Limit)
             if new_signal and tf not in self.data["active"]:
+                is_market = new_signal.get("entry_state", "IN_ZONE") == "IN_ZONE"
                 self.data["active"][tf] = {
-                    "side": new_signal["side"],
-                    "entry": new_signal["entry"],
-                    "sl": new_signal["sl"],
-                    "tp": new_signal["tp"],
-                    "entry_candle_ts": int(candle_ts),
-                    "ts": now_ts,
+                    "tf": tf, "side": new_signal["side"],
+                    "grade": new_signal.get("grade", "B"),
+                    "confidence": new_signal.get("confidence", 50),
+                    "is_sniper": bool(new_signal.get("is_sniper", False)),
+                    "entry_state": new_signal.get("entry_state", "IN_ZONE"),
+                    "filled": is_market,
+                    "entry": new_signal["entry"], "sl": new_signal["sl"], "tp": new_signal["tp"],
+                    "open_kh": now_kh, "ts": now_ts,
                 }
                 changed = True
 
             if changed:
                 self._save()
 
+            # 4) គណនាចំណេញ/ខាតផ្ទាល់ (គណនាតែជើងដែល Filled ហើយប៉ុណ្ណោះ)
+            active_list = []
+            floating_pips_total = 0.0
+            for k_tf, a in self.data["active"].items():
+                cur_px = price if price > 0 else a["entry"]
+                is_filled = bool(a.get("filled", True))
+                if is_filled:
+                    diff = (cur_px - a["entry"]) if a["side"] == "BUY" else (a["entry"] - cur_px)
+                    lpips = round((diff * 10.0) - cost_pips, 1)
+                    floating_pips_total += lpips
+                else:
+                    lpips = 0.0
+                sl_pips = int(round(max(abs(a["entry"] - a["sl"]), 0.1) * 10))
+                tp_pips = int(round(max(abs(a["tp"] - a["entry"]), 0.1) * 10))
+                active_list.append({
+                    "tf": k_tf, "side": a["side"], "grade": a.get("grade", "B"),
+                    "is_sniper": bool(a.get("is_sniper", False)),
+                    "entry_state": a.get("entry_state", "IN_ZONE") if is_filled else "PULLBACK",
+                    "filled": is_filled,
+                    "entry": a["entry"], "sl": a["sl"], "tp": a["tp"],
+                    "live_price": round(cur_px, 2),
+                    "live_pips": lpips, "live_usd": self._pips_to_usd(lpips),
+                    "sl_pips": sl_pips, "tp_pips": tp_pips,
+                    "open_kh": a.get("open_kh", "--"),
+                })
+
             wins, losses = self.data["wins"], self.data["losses"]
             total = wins + losses
-            wr = round((wins / total) * 100.0, 1) if total > 0 else None
+            gw, gl = self.data["gross_win_pips"], self.data["gross_loss_pips"]
+            net_pips = round(gw - gl, 1)
+            pf = round(gw / gl, 2) if gl > 0 else (round(gw, 1) if gw > 0 else None)
 
-            tf_s = self.data["by_tf"].get(tf, {"wins": 0, "losses": 0})
-            tf_tot = tf_s["wins"] + tf_s["losses"]
-            tf_wr = round((tf_s["wins"] / tf_tot) * 100.0, 1) if tf_tot > 0 else None
+            # គណនា Win Rate ដោយឡែកសម្រាប់ Timeframe បច្ចុប្បន្ន
+            tf_rec = [r for r in self.data["recent"] if r.get("tf") == tf]
+            tf_wins = sum(1 for r in tf_rec if r.get("result") == "WIN")
+            tf_wr = round((tf_wins / len(tf_rec)) * 100.0, 1) if tf_rec else None
 
             return {
-                "wins": wins,
-                "losses": losses,
-                "total": total,
-                "win_rate": wr,
-                "tf_wins": tf_s["wins"],
-                "tf_losses": tf_s["losses"],
+                "wins": wins, "losses": losses, "total": total,
+                "win_rate": round((wins / total) * 100.0, 1) if total > 0 else None,
                 "tf_win_rate": tf_wr,
-                "active_count": len(self.data["active"]),
+                "net_pips": net_pips, "net_usd": self._pips_to_usd(net_pips),
+                "floating_pips": round(floating_pips_total, 1),
+                "floating_usd": self._pips_to_usd(floating_pips_total),
+                "profit_factor": pf, "benchmark_lot": BENCHMARK_LOT,
+                "active_count": len(active_list),
+                "active_list": active_list,
+                "recent": self.data["recent"][:12],
             }
 
 
@@ -331,12 +399,10 @@ class GoldBrainService:
 
         self._lock = threading.Lock()
         self._macro_fetch_lock = threading.Lock()
-        self._fred_fetch_lock = threading.Lock()
         self._news_fetch_lock = threading.Lock()
         self._war_fetch_lock = threading.Lock()
 
         self._macro_cache = {"ts": 0.0, "raw": None, "feat": None}
-        self._fred_cache = {"ts": 0.0, "data": None}
         self._news_cache = {"ts": 0.0, "data": None}
         self._war_cache = {"ts": 0.0, "data": None}
         self._ev_cache = {"year": None, "times": None}
@@ -345,10 +411,10 @@ class GoldBrainService:
         self._last_reload_try = 0.0
 
         self._session = requests.Session()
-        adapter = HTTPAdapter(pool_connections=16, pool_maxsize=24, max_retries=0)
+        adapter = HTTPAdapter(pool_connections=12, pool_maxsize=20, max_retries=0)
         self._session.mount("http://", adapter)
         self._session.mount("https://", adapter)
-        self._session.headers.update({"User-Agent": "TriPisalGoldTerminal/10.4"})
+        self._session.headers.update({"User-Agent": "TriPisalGoldTerminal/10.6-Final"})
 
         self._load_model()
 
@@ -364,7 +430,7 @@ class GoldBrainService:
             self.bundle = loaded
             self.load_error = None
             print(
-                f"[BRAIN] Loaded {self.bundle.get('version', 'V8')} (V10.4 Institutional Quant) | "
+                f"[BRAIN] Loaded {self.bundle.get('version', 'V8')} (V10.6 Final Hardened) | "
                 f"features={len(self.bundle.get('features', []))} | "
                 f"cutoff={self.bundle.get('min_percentile', 0.50)}"
             )
@@ -381,155 +447,9 @@ class GoldBrainService:
             self._last_reload_try = now
             self._load_model()
 
-    def _http_get(self, url: str, timeout: tuple[float, float] = (2.0, 3.5)) -> requests.Response | None:
-        try:
-            r = self._session.get(url, timeout=timeout)
-            if r.status_code == 200 and r.content:
-                return r
-        except Exception:
-            pass
-        return None
-
-    # ==================== FRED OFFICIAL US MACRO ENGINE ====================
-    def _fetch_fred_series(self, series_id: str, limit: int = 15) -> list[float]:
-        """ទាញទិន្នន័យ FRED ផ្លូវការ៖ ប្រើ FRED API បើមាន Key ឬ Public CSV ឥតគិតថ្លៃបើគ្មាន Key"""
-        if FRED_API_KEY:
-            url = (
-                f"https://api.stlouisfed.org/fred/series/observations"
-                f"?series_id={series_id}&api_key={FRED_API_KEY}&file_type=json"
-                f"&sort_order=desc&limit={limit}"
-            )
-            r = self._http_get(url, timeout=(2.5, 4.0))
-            if r is not None:
-                try:
-                    obs = r.json().get("observations") or []
-                    vals = []
-                    for o in reversed(obs):
-                        v = o.get("value")
-                        if v not in (None, "", "."):
-                            vals.append(float(v))
-                    if vals:
-                        return vals
-                except Exception:
-                    pass
-
-        # Public Free CSV Fallback (No API Key Required)
-        start_dt = (datetime.now(timezone.utc) - timedelta(days=450)).strftime("%Y-%m-%d")
-        csv_url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}&cosd={start_dt}"
-        r = self._http_get(csv_url, timeout=(2.5, 4.5))
-        if r is None:
-            return []
-        vals = []
-        try:
-            reader = csv.reader(io.StringIO(r.text))
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 2 and row[1] not in ("", "."):
-                    vals.append(float(row[1]))
-            return vals[-limit:]
-        except Exception:
-            return []
-
-    def fetch_fred_macro(self, ttl: float = 3600.0) -> dict:
-        now = time.monotonic()
-        with self._lock:
-            stale = self._fred_cache["data"]
-            if stale is not None and (now - self._fred_cache["ts"]) < ttl:
-                return stale
-
-        if not self._fred_fetch_lock.acquire(blocking=False):
-            return stale or self._empty_fred_macro()
-
-        try:
-            fetched = {}
-            with ThreadPoolExecutor(max_workers=len(FRED_SERIES)) as ex:
-                futs = {ex.submit(self._fetch_fred_series, sid, 15): sid for sid in FRED_SERIES}
-                for f in as_completed(futs):
-                    sid = futs[f]
-                    try:
-                        fetched[sid] = f.result()
-                    except Exception:
-                        fetched[sid] = []
-
-            dgs10 = fetched.get("DGS10") or []
-            dfii10 = fetched.get("DFII10") or []
-            cpi = fetched.get("CPIAUCSL") or []
-            unrate = fetched.get("UNRATE") or []
-            fedfunds = fetched.get("FEDFUNDS") or []
-
-            us10y = round(dgs10[-1], 2) if dgs10 else None
-            us10y_chg5 = round(dgs10[-1] - dgs10[-6], 3) if len(dgs10) >= 6 else 0.0
-            real10 = round(dfii10[-1], 2) if dfii10 else None
-            real10_chg5 = round(dfii10[-1] - dfii10[-6], 3) if len(dfii10) >= 6 else 0.0
-            cpi_yoy = round(((cpi[-1] / cpi[-13]) - 1.0) * 100.0, 2) if len(cpi) >= 13 else None
-            unemp = round(unrate[-1], 2) if unrate else None
-            unemp_chg = round(unrate[-1] - unrate[-2], 2) if len(unrate) >= 2 else 0.0
-            fed_rate = round(fedfunds[-1], 2) if fedfunds else None
-            fed_chg = round(fedfunds[-1] - fedfunds[-2], 2) if len(fedfunds) >= 2 else 0.0
-
-            # គណនា FRED Official Macro Bias (-1.0 ដល់ +1.0)
-            score = 0.0
-            notes = []
-            if real10_chg5 <= -0.06:
-                score += 0.35; notes.append(f"Real Yield ធ្លាក់ ({real10_chg5:+.2f}%)")
-            elif real10_chg5 >= 0.06:
-                score -= 0.35; notes.append(f"Real Yield ឡើង ({real10_chg5:+.2f}%)")
-
-            if us10y_chg5 <= -0.08:
-                score += 0.25
-            elif us10y_chg5 >= 0.08:
-                score -= 0.25
-
-            if fed_chg < -0.05:
-                score += 0.25; notes.append(f"Fed កាត់ការប្រាក់ ({fed_rate}%)")
-            elif fed_chg > 0.05:
-                score -= 0.25; notes.append(f"Fed ដំឡើងការប្រាក់ ({fed_rate}%)")
-
-            if unemp_chg >= 0.1:
-                score += 0.20; notes.append(f"ភាពអត់ការងារកើន ({unemp}%)")
-            elif unemp_chg <= -0.1:
-                score -= 0.15
-
-            if cpi_yoy is not None and cpi_yoy >= 3.2:
-                score += 0.15; notes.append(f"អតិផរណា CPI ខ្ពស់ ({cpi_yoy}%)")
-
-            score = max(-1.0, min(1.0, round(score, 2)))
-            if score >= 0.20:
-                bias, summary_km = "BULLISH", "ទិន្នន័យ FRED អាមេរិកគាំទ្រតម្លៃមាសឡើង"
-            elif score <= -0.20:
-                bias, summary_km = "BEARISH", "ទិន្នន័យ FRED អាមេរិកដាក់សម្ពាធឱ្យមាសចុះ"
-            else:
-                bias, summary_km = "NEUTRAL", "ទិន្នន័យម៉ាក្រូ FRED មានលំនឹង"
-
-            if not any((us10y, real10, cpi_yoy, unemp, fed_rate)) and stale is not None:
-                return stale
-
-            f_time = _format_dual_time(datetime.now(timezone.utc))
-            result = {
-                "source": "FRED API" if FRED_API_KEY else "FRED Public",
-                "us10y": us10y, "us10y_chg5": us10y_chg5,
-                "real10": real10, "real10_chg5": real10_chg5,
-                "cpi_yoy": cpi_yoy, "unemployment": unemp,
-                "fed_rate": fed_rate, "bias": bias, "score": score,
-                "summary_km": summary_km, "notes": notes[:3],
-                "updated_at": f"កម្ពុជា {f_time['kh']} ({f_time['utc']})",
-            }
-            with self._lock:
-                self._fred_cache = {"ts": time.monotonic(), "data": result}
-            return result
-        finally:
-            self._fred_fetch_lock.release()
-
-    def _empty_fred_macro(self) -> dict:
-        return {
-            "source": "FRED", "us10y": None, "us10y_chg5": 0.0,
-            "real10": None, "real10_chg5": 0.0, "cpi_yoy": None,
-            "unemployment": None, "fed_rate": None, "bias": "NEUTRAL",
-            "score": 0.0, "summary_km": "កំពុងភ្ជាប់ទិន្នន័យ FRED...",
-            "notes": [], "updated_at": "--",
-        }
-
     def _get_macro(self, ttl: float = 1800.0):
+        if core is None:
+            return None, None
         now = time.monotonic()
         with self._lock:
             if self._macro_cache["feat"] is not None and (now - self._macro_cache["ts"]) < ttl:
@@ -555,6 +475,8 @@ class GoldBrainService:
             self._macro_fetch_lock.release()
 
     def _get_events(self):
+        if core is None:
+            return []
         yr = datetime.now(timezone.utc).year
         with self._lock:
             if self._ev_cache["year"] == yr and self._ev_cache["times"] is not None:
@@ -566,6 +488,15 @@ class GoldBrainService:
         with self._lock:
             self._ev_cache = {"year": yr, "times": times}
         return times
+
+    def _http_get(self, url: str, timeout: tuple[float, float] = (2.0, 3.2)) -> requests.Response | None:
+        try:
+            r = self._session.get(url, timeout=timeout)
+            if r.status_code == 200 and r.content:
+                return r
+        except Exception:
+            pass
+        return None
 
     def _fetch_rss_items(self, source_name: str, url: str, limit: int = 16) -> list[tuple[str, str, str, str | None]]:
         r = self._http_get(url)
@@ -586,42 +517,19 @@ class GoldBrainService:
             return []
         return out
 
-    def _fetch_finnhub_news(self, limit: int = 15) -> list[tuple[str, str, str, str | None]]:
-        if not FINNHUB_API_KEY:
-            return []
-        url = f"https://finnhub.io/api/v1/news?category=general&token={FINNHUB_API_KEY}"
-        r = self._http_get(url, timeout=(2.0, 3.2))
-        if r is None:
-            return []
-        out = []
-        try:
-            for item in (r.json() or [])[:limit]:
-                headline = (item.get("headline") or "").strip()
-                if headline:
-                    src = item.get("source") or "Finnhub"
-                    out.append((f"Finnhub/{src}", headline, item.get("url") or "", str(item.get("datetime") or "")))
-        except Exception:
-            return []
-        return out
-
-    def fetch_global_news(self, ttl: float = 300.0) -> dict:
+    def fetch_global_news(self, session: requests.Session | None = None, ttl: float = 300.0) -> dict:
         now = time.monotonic()
         with self._lock:
             stale_data = self._news_cache["data"]
             if stale_data is not None and (now - self._news_cache["ts"]) < ttl:
                 return stale_data
-
         if not self._news_fetch_lock.acquire(blocking=False):
             return stale_data or self._empty_global_news()
-
         try:
             now_utc = datetime.now(timezone.utc)
             raw_items = []
-            max_w = len(GLOBAL_RSS_FEEDS) + (1 if FINNHUB_API_KEY else 0)
-            with ThreadPoolExecutor(max_workers=max_w) as ex:
+            with ThreadPoolExecutor(max_workers=len(GLOBAL_RSS_FEEDS)) as ex:
                 futs = [ex.submit(self._fetch_rss_items, src, url, 14) for src, url in GLOBAL_RSS_FEEDS]
-                if FINNHUB_API_KEY:
-                    futs.append(ex.submit(self._fetch_finnhub_news, 16))
                 for f in as_completed(futs):
                     try:
                         raw_items.extend(f.result())
@@ -665,9 +573,9 @@ class GoldBrainService:
             headlines.sort(key=lambda x: x["ts"], reverse=True)
             norm_score = max(-1.0, min(1.0, round(total_score / 8.5, 2)))
             if norm_score >= 0.20:
-                bias, summary_km = "BULLISH", "ព័ត៌មានសេដ្ឋកិច្ច និងមាសពិភពលោកកំពុងគាំទ្រឲ្យមាសឡើងថ្លៃ"
+                bias, summary_km = "BULLISH", "ព័ត៌មានសេដ្ឋកិច្ច និងមាសពិភពលោកគាំទ្រឱ្យមាសឡើង"
             elif norm_score <= -0.20:
-                bias, summary_km = "BEARISH", "ព័ត៌មានសេដ្ឋកិច្ចពិភពលោកកំពុងដាក់សម្ពាធឲ្យមាសចុះថ្លៃ"
+                bias, summary_km = "BEARISH", "ព័ត៌មានសេដ្ឋកិច្ចពិភពលោកដាក់សម្ពាធឱ្យមាសចុះ"
             else:
                 bias, summary_km = "NEUTRAL", "ព័ត៌មានមាសពិភពលោកមានលំនឹងធម្មតា"
 
@@ -707,16 +615,14 @@ class GoldBrainService:
             return []
         return out
 
-    def fetch_war_news(self, ttl: float = 300.0) -> dict:
+    def fetch_war_news(self, session: requests.Session | None = None, ttl: float = 300.0) -> dict:
         now = time.monotonic()
         with self._lock:
             stale_data = self._war_cache["data"]
             if stale_data is not None and (now - self._war_cache["ts"]) < ttl:
                 return stale_data
-
         if not self._war_fetch_lock.acquire(blocking=False):
             return stale_data or self._empty_war_news()
-
         try:
             now_utc = datetime.now(timezone.utc)
             raw_items = []
@@ -738,14 +644,11 @@ class GoldBrainService:
                 t_low = clean_t.lower()
                 sc_base = 0.0
                 for pat, w in _WAR_HIGH_PATTERNS:
-                    if pat.search(t_low):
-                        sc_base += w
+                    if pat.search(t_low): sc_base += w
                 for pat, w in _WAR_MED_PATTERNS:
-                    if pat.search(t_low):
-                        sc_base += w
+                    if pat.search(t_low): sc_base += w
                 for pat, w in _WAR_COOL_PATTERNS:
-                    if pat.search(t_low):
-                        sc_base += w
+                    if pat.search(t_low): sc_base += w
                 if abs(sc_base) < 1.5:
                     continue
 
@@ -769,13 +672,13 @@ class GoldBrainService:
             items.sort(key=lambda x: (abs(x["score"]), x["ts"]), reverse=True)
             norm = max(-1.0, min(1.0, round(raw_tension / 11.0, 2)))
             if norm >= 0.45:
-                level, gold_impact, summary_km = "HIGH", "BULLISH", "ភាពតានតឹងសង្គ្រាមកើនឡើងខ្លាំង — កម្លាំងទិញមាស Safe-Haven ខ្ពស់"
+                level, gold_impact, summary_km = "HIGH", "BULLISH", "សង្គ្រាមតានតឹងខ្លាំង — កម្លាំងទិញមាស Safe-Haven ខ្ពស់"
             elif norm >= 0.18:
-                level, gold_impact, summary_km = "MEDIUM", "BULLISH", "មានព័ត៌មានជម្លោះភូមិសាស្ត្រនយោបាយ — ជួយទ្រតម្លៃមាស"
+                level, gold_impact, summary_km = "MEDIUM", "BULLISH", "មានជម្លោះភូមិសាស្ត្រនយោបាយ — ជួយទ្រតម្លៃមាស"
             elif norm <= -0.25:
-                level, gold_impact, summary_km = "COOLING", "BEARISH", "មានសញ្ញាបន្ធូរបន្ថយសង្គ្រាម/ឈប់បាញ់ — អាចធ្វើឲ្យមាសថយចុះបន្តិច"
+                level, gold_impact, summary_km = "COOLING", "BEARISH", "សង្គ្រាមធូរស្រាល/ឈប់បាញ់ — អាចឱ្យមាសថយចុះ"
             else:
-                level, gold_impact, summary_km = "LOW", "NEUTRAL", "ស្ថានភាពភូមិសាស្ត្រនយោបាយស្ងប់ស្ងាត់ធម្មតា"
+                level, gold_impact, summary_km = "LOW", "NEUTRAL", "ភូមិសាស្ត្រនយោបាយស្ងប់ស្ងាត់ធម្មតា"
 
             f_time = _format_dual_time(now_utc)
             result = {
@@ -800,28 +703,34 @@ class GoldBrainService:
             "updated_at": f"កម្ពុជា {f_time['kh']} • {f_time['ny']} ({f_time['utc']})",
         }
 
-    def _get_external_context_fast(self) -> tuple[dict, dict, dict, pd.DataFrame | None, pd.DataFrame | None]:
+    def _get_external_context_fast(self) -> tuple[dict, dict, pd.DataFrame | None, pd.DataFrame | None]:
         now = time.monotonic()
         with self._lock:
             news_ok = self._news_cache["data"] is not None and (now - self._news_cache["ts"]) < 300.0
             war_ok = self._war_cache["data"] is not None and (now - self._war_cache["ts"]) < 300.0
-            fred_ok = self._fred_cache["data"] is not None and (now - self._fred_cache["ts"]) < 3600.0
             macro_ok = self._macro_cache["feat"] is not None and (now - self._macro_cache["ts"]) < 1800.0
-            if news_ok and war_ok and fred_ok and macro_ok:
-                return (
-                    self._news_cache["data"], self._war_cache["data"], self._fred_cache["data"],
-                    self._macro_cache["raw"], self._macro_cache["feat"]
-                )
+            if news_ok and war_ok and macro_ok:
+                return self._news_cache["data"], self._war_cache["data"], self._macro_cache["raw"], self._macro_cache["feat"]
 
-        with ThreadPoolExecutor(max_workers=4) as ex:
+        with ThreadPoolExecutor(max_workers=3) as ex:
             f_news = ex.submit(self.fetch_global_news)
             f_war = ex.submit(self.fetch_war_news)
-            f_fred = ex.submit(self.fetch_fred_macro)
             f_macro = ex.submit(self._get_macro)
-            raw_m, feat_m = f_macro.result()
-            return f_news.result(), f_war.result(), f_fred.result(), raw_m, feat_m
+            try:
+                gn = f_news.result(timeout=6.0)
+            except Exception:
+                gn = self._empty_global_news()
+            try:
+                wn = f_war.result(timeout=6.0)
+            except Exception:
+                wn = self._empty_war_news()
+            try:
+                rm, fm = f_macro.result(timeout=8.0)
+            except Exception:
+                rm, fm = None, None
+            return gn, wn, rm, fm
 
-    # ==================== PILLAR 1: 10-YEAR V8 ENSEMBLE + CONSENSUS ====================
+    # ==================== PILLAR 1: 10-YEAR V8 ENSEMBLE ====================
     def _score_row_detailed(self, row_df: pd.DataFrame) -> dict:
         models = self.bundle["models"]
         wts = self.bundle.get("weights", (0.30, 0.35, 0.35))
@@ -836,14 +745,10 @@ class GoldBrainService:
         return {"prob": prob, "pct": max(0.0, min(1.0, pct)), "agreement": round(agreement, 2)}
 
     def _infer_v8_cached(self, df_1h: pd.DataFrame, feat_m: pd.DataFrame | None, ev_times, atr_chart: float) -> dict | None:
-        if self.bundle is None or df_1h is None or len(df_1h) < 60:
+        if core is None or self.bundle is None or df_1h is None or len(df_1h) < 60:
             return None
         try:
-            cache_key = (
-                str(df_1h.iloc[-2].get("datetime", df_1h.index[-2])),
-                round(_safe_float(df_1h.iloc[-2].get("close"), 0.0), 2),
-                self.bundle.get("version", "V8"),
-            )
+            cache_key = (str(df_1h.iloc[-2].get("datetime", df_1h.index[-2])), round(_safe_float(df_1h.iloc[-2].get("close"), 0.0), 2), self.bundle.get("version", "V8"))
         except Exception:
             cache_key = None
 
@@ -852,7 +757,7 @@ class GoldBrainService:
                 return self._v8_bar_cache["res"]
 
         feat_df = core.build_features(df_1h, feat_m, ev_times) if feat_m is not None else pd.DataFrame()
-        if len(feat_df) < 2:
+        if feat_df is None or len(feat_df) < 2:
             return None
 
         closed_row = feat_df.iloc[-2:-1]
@@ -885,17 +790,18 @@ class GoldBrainService:
                 self._v8_bar_cache = {"key": cache_key, "res": res}
         return res
 
-    # ==================== PILLAR 2: MICROSTRUCTURE + REAL ORDER FLOW + CLOSE CONFIRMATION ====================
+    # ==================== PILLAR 2: MICROSTRUCTURE + BULLISH/BEARISH OB ====================
     def _analyze_microstructure(
-        self, candles: list, price: float, ema20: float, ema50: float, atr_val: float, smc: dict, order_flow: dict | None = None
+        self, candles: list, price: float, ema20: float, ema50: float, atr_val: float, smc: dict
     ) -> dict:
         res = {
             "buy_pts": 0, "sell_pts": 0,
             "notes_buy": [], "notes_sell": [],
             "bull_reversal": False, "bear_reversal": False,
             "close_confirmed_buy": False, "close_confirmed_sell": False,
-            "buy_pressure_pct": 50, "order_flow_source": "CANDLES",
+            "buy_pressure_pct": 50,
             "falling_knife": False, "rising_rocket": False,
+            "in_bullish_ob": None, "in_bearish_ob": None,
             "sweep_note": None, "climax": None,
         }
         if not candles or len(candles) < 8:
@@ -908,77 +814,85 @@ class GoldBrainService:
         if h1 <= 0 or l1 <= 0 or h1 < l1:
             return res
 
-        # 0) គណនា Buy/Sell Pressure (%) ដោយរួមបញ្ចូល Real-Time Order Flow (Binance aggTrade + OKX) ជាមួយទៀន 5 ដើម
+        # 0) Buy/Sell Pressure (%)
         buy_vol, tot_vol = 0.0, 0.0
         for c in candles[-5:]:
             ch, cl_l, cc = _safe_float(c.get("high")), _safe_float(c.get("low")), _safe_float(c.get("close"))
             rng = max(ch - cl_l, 0.01)
-            vol = _safe_float(c.get("volume"), 0.0)
-            wt = vol if vol > 0 else rng
-            buy_ratio = max(0.0, min(1.0, (cc - cl_l) / rng))
-            buy_vol += buy_ratio * wt
+            wt = max(_safe_float(c.get("volume"), 0.0), rng)
+            buy_vol += max(0.0, min(1.0, (cc - cl_l) / rng)) * wt
             tot_vol += wt
-        candle_press = (buy_vol / tot_vol) * 100.0 if tot_vol > 0 else 50.0
-
-        of_buy = _safe_float((order_flow or {}).get("buy_pct"), -1.0)
-        if 0.0 <= of_buy <= 100.0 and int((order_flow or {}).get("trades_count", 0)) >= 10:
-            # ផ្តល់ទម្ងន់ 65% លើ Real-Time Order Flow ពិត + 35% លើទៀន 5 ដើម
-            buy_press = int(round(of_buy * 0.65 + candle_press * 0.35))
-            res["order_flow_source"] = str(order_flow.get("source") or "LIVE_FLOW")
-        else:
-            buy_press = int(round(candle_press))
-
+        buy_press = int(round((buy_vol / tot_vol) * 100)) if tot_vol > 0 else 50
         res["buy_pressure_pct"] = buy_press
-        if buy_press >= 60:
-            res["buy_pts"] += 7
-            res["notes_buy"].append(f"Order Flow កម្លាំងទិញឈ្នះ ({buy_press}%)")
-        elif buy_press <= 40:
-            res["sell_pts"] += 7
-            res["notes_sell"].append(f"Order Flow កម្លាំងលក់ឈ្នះ ({100 - buy_press}%)")
+        if buy_press >= 62:
+            res["buy_pts"] += 6; res["notes_buy"].append(f"កម្លាំងលុយទិញឈ្នះ ({buy_press}%)")
+        elif buy_press <= 38:
+            res["sell_pts"] += 6; res["notes_sell"].append(f"កម្លាំងលុយលក់ឈ្នះ ({100 - buy_press}%)")
 
         rng1, body1 = max(h1 - l1, 0.01), abs(cl1 - o1)
         up_wick1, lo_wick1 = h1 - max(o1, cl1), min(o1, cl1) - l1
         atr_ref = max(_safe_float(atr_val, 2.0), 0.6)
-        c1_green, c1_red = cl1 > o1, cl1 < o1
-        c0_green, c0_red = cl0 > o0, cl0 < o0
+        c1_green, c1_red, c0_green, c0_red = cl1 > o1, cl1 < o1, cl0 > o0, cl0 < o0
 
-        # 1) Candle Close Confirmation (ទៀនបិទចុងក្រោយបញ្ជាក់ទិសដៅពិតប្រាកដ)
+        # 1) Bullish OB & Bearish OB Reaction Check
+        ob_buf = max(atr_ref * 0.35, 0.40)
+        for ob in (smc.get("demand_blocks") or []):
+            if str(ob.get("label", "OB")).upper() != "OB":
+                continue
+            b_bot, b_top = _safe_float(ob.get("bottom")), _safe_float(ob.get("top"))
+            if 0 < b_bot and (b_bot - ob_buf) <= price <= (b_top + ob_buf):
+                res["in_bullish_ob"] = (b_bot, b_top)
+                if c0_green or c1_green:
+                    res["buy_pts"] += 10
+                    res["bull_reversal"] = True
+                    res["notes_buy"].insert(0, f"តម្លៃប៉ះ Bullish OB (${b_bot:.2f}–${b_top:.2f}) ហើយស្ទុះឡើង")
+                break
+
+        for sob in (smc.get("supply_blocks") or []):
+            if str(sob.get("label", "OB")).upper() != "OB":
+                continue
+            s_bot, s_top = _safe_float(sob.get("bottom")), _safe_float(sob.get("top"))
+            if 0 < s_bot and (s_bot - ob_buf) <= price <= (s_top + ob_buf):
+                res["in_bearish_ob"] = (s_bot, s_top)
+                if c0_red or c1_red:
+                    res["sell_pts"] += 10
+                    res["bear_reversal"] = True
+                    res["notes_sell"].insert(0, f"តម្លៃប៉ះ Bearish OB (${s_bot:.2f}–${s_top:.2f}) ហើយទម្លាក់ចុះ")
+                break
+
+        # 2) Candle Close Confirmation
         ema_top, ema_bot = max(ema20, ema50), min(ema20, ema50)
         if c1_green and cl1 > ema20 and body1 >= rng1 * 0.35:
             res["close_confirmed_buy"] = True
         if c1_red and cl1 < ema20 and body1 >= rng1 * 0.35:
             res["close_confirmed_sell"] = True
 
-        # 2) Liquidity Sweep / Stop Hunt
+        # 3) Liquidity Sweep
         prev_window = candles[-16:-2]
         prev_low = min((_safe_float(c.get("low"), 1e9) for c in prev_window), default=l1)
         prev_high = max((_safe_float(c.get("high"), 0.0) for c in prev_window), default=h1)
         if l1 < prev_low and cl1 > prev_low and lo_wick1 >= body1 * 0.8:
-            res["buy_pts"] += 10
-            res["bull_reversal"] = True
+            res["buy_pts"] += 10; res["bull_reversal"] = True
             res["sweep_note"] = f"Liquidity Sweep (បោស SL ក្រោម ${prev_low:.2f})"
             res["notes_buy"].append(res["sweep_note"])
         elif h1 > prev_high and cl1 < prev_high and up_wick1 >= body1 * 0.8:
-            res["sell_pts"] += 10
-            res["bear_reversal"] = True
+            res["sell_pts"] += 10; res["bear_reversal"] = True
             res["sweep_note"] = f"Liquidity Sweep (បោស SL លើ ${prev_high:.2f})"
             res["notes_sell"].append(res["sweep_note"])
 
-        # 3) Recent SMC Break (BOS / CHoCH ក្នុង 6 ទៀនចុងក្រោយ)
+        # 4) Recent SMC Break
         last_ts, prev6_ts = _safe_float(c0.get("time"), 0.0), _safe_float(candles[-6].get("time"), 0.0)
         for br in reversed(smc.get("breaks") or []):
             end_t = _safe_float(br.get("end_time"), 0.0)
             if prev6_ts <= end_t <= last_ts + 86400:
                 btype, lbl = str(br.get("type") or ""), br.get("label") or "BOS"
                 if btype.endswith("_UP"):
-                    res["buy_pts"] += 10
-                    res["notes_buy"].append(f"SMC បែករចនាសម្ព័ន្ធឡើង ({lbl})")
+                    res["buy_pts"] += 10; res["notes_buy"].append(f"SMC បែករចនាសម្ព័ន្ធឡើង ({lbl})")
                 elif btype.endswith("_DOWN") or btype.endswith("_DN"):
-                    res["sell_pts"] += 10
-                    res["notes_sell"].append(f"SMC បែករចនាសម្ព័ន្ធចុះ ({lbl})")
+                    res["sell_pts"] += 10; res["notes_sell"].append(f"SMC បែករចនាសម្ព័ន្ធចុះ ({lbl})")
                 break
 
-        # 4) Reversal & Anti-Falling-Knife
+        # 5) Reversal, EMA & Momentum
         bull_pin = (lo_wick1 / rng1) >= 0.46 and lo_wick1 > body1 * 1.15
         bear_pin = (up_wick1 / rng1) >= 0.46 and up_wick1 > body1 * 1.15
         bull_engulf = c1_green and (cl2 < o2) and cl1 >= o2 and body1 >= rng1 * 0.40
@@ -994,13 +908,10 @@ class GoldBrainService:
         if price > ema20 and ((c1_green and c0_green) or (c1_green and cl0 > h1) or ((price - ema20) > atr_ref * 0.70 and not res["bear_reversal"])):
             res["rising_rocket"] = True
 
-        # 5) EMA Structure + Momentum + Breakout
         if price > ema20 and ema20 >= ema50:
-            res["buy_pts"] += 14
-            res["notes_buy"].append("និន្នាការ EMA 20 > EMA 50")
+            res["buy_pts"] += 14; res["notes_buy"].append("និន្នាការ EMA 20 > EMA 50")
         elif price < ema20 and ema20 <= ema50:
-            res["sell_pts"] += 14
-            res["notes_sell"].append("និន្នាការ EMA 20 < EMA 50")
+            res["sell_pts"] += 14; res["notes_sell"].append("និន្នាការ EMA 20 < EMA 50")
         elif price > ema20:
             res["buy_pts"] += 7
         elif price < ema20:
@@ -1012,21 +923,15 @@ class GoldBrainService:
             res["sell_pts"] += 7
 
         if bull_engulf:
-            res["buy_pts"] += 7
-            res["notes_buy"].append("ទៀន Bullish Engulfing")
+            res["buy_pts"] += 7; res["notes_buy"].append("ទៀន Bullish Engulfing")
         elif bear_engulf:
-            res["sell_pts"] += 7
-            res["notes_sell"].append("ទៀន Bearish Engulfing")
+            res["sell_pts"] += 7; res["notes_sell"].append("ទៀន Bearish Engulfing")
 
         if price > ema_top and c0_green and (cl0 - o0) >= atr_ref * 0.45 and o0 <= ema_top + atr_ref * 0.35:
-            res["buy_pts"] += 12
-            res["bull_reversal"] = True
-            res["falling_knife"] = False
+            res["buy_pts"] += 12; res["bull_reversal"] = True; res["falling_knife"] = False
             res["notes_buy"].insert(0, f"ទៀនបៃតងហក់បែក EMA (${ema_top:.2f})")
         elif price < ema_bot and c0_red and (o0 - cl0) >= atr_ref * 0.45 and o0 >= ema_bot - atr_ref * 0.35:
-            res["sell_pts"] += 12
-            res["bear_reversal"] = True
-            res["rising_rocket"] = False
+            res["sell_pts"] += 12; res["bear_reversal"] = True; res["rising_rocket"] = False
             res["notes_sell"].insert(0, f"ទៀនក្រហមបែកធ្លាក់ក្រោម EMA (${ema_bot:.2f})")
 
         if rng1 >= atr_ref * 2.8:
@@ -1034,57 +939,137 @@ class GoldBrainService:
 
         return res
 
-    # ==================== PILLAR 3: FRED MACRO + NEWS + GEOPOLITICAL ====================
+    # ==================== PILLAR 3: MACRO & FUNDAMENTAL ====================
     def _score_fundamentals(
         self, dxy_r1: float, us10y_d5: float, vix_val: float | None,
-        fred_macro: dict, global_news: dict, war_news: dict
+        global_news: dict, war_news: dict, session_kz: dict
     ) -> dict:
         buy_f, sell_f = 0, 0
         notes_buy, notes_sell = [], []
 
         if dxy_r1 <= -0.30:
-            buy_f += 6; notes_buy.append(f"DXY ចុះខ្សោយ ({dxy_r1:+.2f}%)")
+            buy_f += 7; notes_buy.append(f"DXY ចុះខ្សោយ ({dxy_r1:+.2f}%)")
         elif dxy_r1 <= -0.10:
             buy_f += 3
         elif dxy_r1 >= 0.30:
-            sell_f += 6; notes_sell.append(f"DXY ឡើងខ្លាំង ({dxy_r1:+.2f}%)")
+            sell_f += 7; notes_sell.append(f"DXY ឡើងខ្លាំង ({dxy_r1:+.2f}%)")
         elif dxy_r1 >= 0.10:
             sell_f += 3
 
-        eff_us10y_d5 = fred_macro.get("us10y_chg5") if fred_macro.get("us10y") is not None else us10y_d5
-        if eff_us10y_d5 <= -0.08:
-            buy_f += 4; notes_buy.append("US10Y ធ្លាក់ចុះ")
-        elif eff_us10y_d5 >= 0.08:
-            sell_f += 4; notes_sell.append("US10Y ហក់ឡើង")
-
-        # FRED Official Macro Bias (US10Y Real Yield + CPI + Unemployment + Fed Rate)
-        f_bias, f_score = fred_macro.get("bias", "NEUTRAL"), _safe_float(fred_macro.get("score"), 0.0)
-        if f_bias == "BULLISH":
-            buy_f += 5; notes_buy.append(f"FRED Macro គាំទ្រ BUY ({f_score:+.2f})")
-        elif f_bias == "BEARISH":
-            sell_f += 5; notes_sell.append(f"FRED Macro គាំទ្រ SELL ({f_score:+.2f})")
+        if us10y_d5 <= -0.08:
+            buy_f += 5; notes_buy.append("US10Y ធ្លាក់ចុះ")
+        elif us10y_d5 >= 0.08:
+            sell_f += 5; notes_sell.append("US10Y ហក់ឡើង")
 
         if vix_val is not None and vix_val >= 22.0:
-            buy_f += 2
+            buy_f += 3
 
         g_bias, g_score = global_news.get("bias", "NEUTRAL"), _safe_float(global_news.get("score"), 0.0)
         if g_bias == "BULLISH":
-            buy_f += 5; notes_buy.append(f"ព័ត៌មានមាសគាំទ្រ BUY ({g_score:+.2f})")
+            buy_f += 6; notes_buy.append(f"ព័ត៌មានមាសគាំទ្រ BUY ({g_score:+.2f})")
         elif g_bias == "BEARISH":
-            sell_f += 5; notes_sell.append(f"ព័ត៌មានមាសគាំទ្រ SELL ({g_score:+.2f})")
+            sell_f += 6; notes_sell.append(f"ព័ត៌មានមាសគាំទ្រ SELL ({g_score:+.2f})")
 
         w_level, w_impact = war_news.get("level", "LOW"), war_news.get("gold_impact", "NEUTRAL")
         if w_level == "HIGH" and w_impact == "BULLISH":
-            buy_f += 4; notes_buy.append("សង្គ្រាម HIGH ជំរុញ Safe-Haven")
+            buy_f += 5; notes_buy.append("សង្គ្រាម HIGH ជំរុញ Safe-Haven")
         elif w_level == "MEDIUM" and w_impact == "BULLISH":
-            buy_f += 2
+            buy_f += 3
         elif w_level == "COOLING":
-            sell_f += 3; notes_sell.append("សង្គ្រាមធូរស្រាល")
+            sell_f += 4; notes_sell.append("សង្គ្រាមធូរស្រាល")
 
         return {"buy_pts": min(25, buy_f), "sell_pts": min(25, sell_f), "notes_buy": notes_buy, "notes_sell": notes_sell}
 
+    # ==================== LIVE EXIT & OB PROTECTION SHIELD ====================
+    def _compute_exit_shield(
+        self, price: float, ema20: float, rsi: float, spread: float,
+        ms: dict, smc: dict, cal_news: dict, active_side: str
+    ) -> dict:
+        if cal_news.get("danger"):
+            return {"state": "EXIT_NOW", "level": "DANGER", "title_km": "🛑 ឈប់ភ្លាម (ព័ត៌មានក្រហម USD)", "action_km": "បិទ Order ទាំងអស់មុនព័ត៌មានចេញ"}
+        if spread > 1.50:
+            return {"state": "EXIT_NOW", "level": "DANGER", "title_km": "🛑 ឈប់ភ្លាម (Spread រីកខ្លាំង)", "action_km": f"Spread ${spread:.2f} — ផ្អាកជួញដូរ"}
+        if rsi >= 76.0 or (active_side == "BUY" and ms.get("in_bearish_ob")):
+            return {"state": "TAKE_PROFIT", "level": "WARN", "title_km": "💰 គួរបិទ BUY / ការពារចំណេញភ្លាម", "action_km": "តម្លៃបុក Bearish OB ឬ RSI ខ្ពស់ — កាត់យកចំណេញ ឬរំកិល SL កៀកតម្លៃ"}
+        if rsi <= 24.0 or (active_side == "SELL" and ms.get("in_bullish_ob")):
+            return {"state": "TAKE_PROFIT", "level": "WARN", "title_km": "💰 គួរបិទ SELL / ការពារចំណេញភ្លាម", "action_km": "តម្លៃបុក Bullish OB ឬ RSI ទាប — កាត់យកចំណេញ ឬរំកិល SL កៀកតម្លៃ"}
+        if active_side == "BUY" and (ms.get("falling_knife") or price < ema20):
+            return {"state": "CUT_NOW", "level": "DANGER", "title_km": "🛑 បញ្ឈប់ BUY ភ្លាម (បែកក្រោម EMA 20)", "action_km": "និន្នាការប្តូរចុះ — កាត់ខាតលឿនកុំកាន់បន្ត"}
+        if active_side == "SELL" and (ms.get("rising_rocket") or price > ema20):
+            return {"state": "CUT_NOW", "level": "DANGER", "title_km": "🛑 បញ្ឈប់ SELL ភ្លាម (បែកលើ EMA 20)", "action_km": "និន្នាការប្តូរឡើង — កាត់ខាតលឿនកុំកាន់បន្ត"}
+        if active_side in ("BUY", "SELL"):
+            return {"state": "HOLD_SAFE", "level": "SAFE", "title_km": f"🛡️ កាន់ {active_side} បាន (សុវត្ថិភាព)", "action_km": "ដាក់ SL ដាច់ខាត • ចំណេញ 50% រំកិល BE ភ្លាម"}
+        return {"state": "STANDBY", "level": "INFO", "title_km": "🛡️ ប្រព័ន្ធការពារសកម្ម", "action_km": "រង់ចាំចំណុចចូលច្បាស់ (មិនដេញតម្លៃ)"}
+
+    # ==================== BEGINNER-FRIENDLY 4-RULE ACTION GUIDE ====================
+    def _build_beginner_guide(
+        self, price: float, interval_key: str, market_state: dict,
+        smc: dict, candles: list, active_side: str, can_trade: bool,
+        plan: dict | None, preview_plan: dict | None,
+        buy_trig: float, sell_trig: float,
+        global_news: dict, war_news: dict, macro: dict
+    ) -> dict:
+        recent = candles[-20:] if candles else []
+        rng_hi = max((_safe_float(c.get("high"), price) for c in recent), default=price + 3.0)
+        rng_lo = min((_safe_float(c.get("low"), price) for c in recent), default=price - 3.0)
+        tf_km = {"1m": "១នាទី", "5m": "៥នាទី", "15m": "១៥នាទី", "1h": "១ម៉ោង", "4h": "៤ម៉ោង", "1d": "១ថ្ងៃ"}.get(interval_key, interval_key)
+
+        ref_plan = plan or preview_plan
+        bias_side = active_side if active_side in ("BUY", "SELL") else ("BUY" if (ref_plan and ref_plan["tp"] > ref_plan["entry"]) else "SELL")
+
+        tcode = market_state.get("trend_code", "SIDEWAY")
+        if tcode == "SIDEWAY" or (not can_trade and abs(rng_hi - rng_lo) <= 8.0):
+            row1 = {"icon": "range", "prefix": "ផ្សារកំពុង Sideway", "hl": f"{rng_lo:,.2f} – {rng_hi:,.2f}", "suffix": "កុំចូលនៅកណ្តាល"}
+        elif "UP" in tcode or "BULL" in tcode:
+            row1 = {"icon": "up", "prefix": "ផ្សារកំពុងឡើង (Uptrend)", "hl": f"{rng_lo:,.2f} → {rng_hi:,.2f}", "suffix": "ផ្តោតរកឱកាស BUY"}
+        else:
+            row1 = {"icon": "down", "prefix": "ផ្សារកំពុងចុះ (Downtrend)", "hl": f"{rng_hi:,.2f} → {rng_lo:,.2f}", "suffix": "ផ្តោតរកឱកាស SELL"}
+
+        if ref_plan:
+            ent = ref_plan["entry"]
+            if bias_side == "BUY":
+                row2 = {"icon": "target_buy", "prefix": "ចូលទិញ (BUY) នៅ" if (can_trade and ref_plan.get("entry_state") == "IN_ZONE") else "ចាំទិញ (BUY) នៅ", "hl": f"${ent:,.2f}", "suffix": "កុំដេញទិញនៅកំពូល"}
+            else:
+                row2 = {"icon": "target_sell", "prefix": "ចូលលក់ (SELL) នៅ" if (can_trade and ref_plan.get("entry_state") == "IN_ZONE") else "ចាំលក់ (SELL) នៅ", "hl": f"${ent:,.2f}", "suffix": "កុំដេញលក់នៅបាត"}
+        else:
+            row2 = {"icon": "target_buy", "prefix": "ចាំបែកលើ", "hl": f"${buy_trig:,.2f}", "suffix": f"ដើម្បី BUY ឬក្រោម ${sell_trig:,.2f} SELL"}
+
+        bull_obs = [b for b in (smc.get("demand_blocks") or []) if str(b.get("label", "OB")).upper() == "OB"] or (smc.get("demand_blocks") or [])
+        bear_obs = [b for b in (smc.get("supply_blocks") or []) if str(b.get("label", "OB")).upper() == "OB"] or (smc.get("supply_blocks") or [])
+        if bias_side == "SELL":
+            if bull_obs:
+                b_lo, b_hi = _safe_float(bull_obs[0].get("bottom"), rng_lo), _safe_float(bull_obs[0].get("top"), rng_lo + 2.0)
+                row3 = {"icon": "avoid", "prefix": "កុំលក់នៅ", "hl": f"{b_lo:,.2f} – {b_hi:,.2f}", "suffix": "អ្នកទិញច្រើន (Bullish OB)"}
+            else:
+                row3 = {"icon": "avoid", "prefix": "កុំលក់នៅ", "hl": f"{rng_lo:,.2f} – {rng_lo + 2.5:,.2f}", "suffix": "តំបន់ទ្រក្រោម (Support)"}
+        else:
+            if bear_obs:
+                s_lo, s_hi = _safe_float(bear_obs[0].get("bottom"), rng_hi - 2.0), _safe_float(bear_obs[0].get("top"), rng_hi)
+                row3 = {"icon": "avoid", "prefix": "កុំទិញនៅ", "hl": f"{s_lo:,.2f} – {s_hi:,.2f}", "suffix": "អ្នកលក់ច្រើន (Bearish OB)"}
+            else:
+                row3 = {"icon": "avoid", "prefix": "កុំទិញនៅ", "hl": f"{rng_hi - 2.5:,.2f} – {rng_hi:,.2f}", "suffix": "តំបន់ទប់លើ (Resistance)"}
+
+        stop_px = ref_plan["sl"] if ref_plan else (sell_trig if bias_side == "BUY" else buy_trig)
+        if bias_side == "BUY":
+            row4 = {"icon": "stop", "prefix": f"ឈប់ទិញ បើទៀន {tf_km} បិទក្រោម", "hl": f"${stop_px:,.2f}", "suffix": ""}
+        else:
+            row4 = {"icon": "stop", "prefix": f"ឈប់លក់ បើទៀន {tf_km} បិទលើ", "hl": f"${stop_px:,.2f}", "suffix": ""}
+
+        w_lvl = war_news.get("level", "LOW")
+        w_km = "តានតឹងខ្លាំង (ទ្រមាស)" if w_lvl == "HIGH" else ("មធ្យម" if w_lvl == "MEDIUM" else ("ធូរស្រាល" if w_lvl == "COOLING" else "ស្ងប់ស្ងាត់"))
+        g_bias = global_news.get("bias", "NEUTRAL")
+        g_km = "គាំទ្រឡើង" if g_bias == "BULLISH" else ("សម្ពាធចុះ" if g_bias == "BEARISH" else "លំនឹង")
+
+        return {
+            "rows": [row1, row2, row3, row4],
+            "war_km": w_km, "war_level": w_lvl,
+            "econ_km": g_km, "econ_bias": g_bias,
+            "dxy": f"{macro.get('dxy')}" if macro.get("dxy") is not None else "--",
+            "us10y": f"{macro.get('us10y')}%" if macro.get("us10y") is not None else "--",
+            "footer_km": f"ទៀនបិទ = ទៀនចប់ {tf_km} មិនមែនគ្រាន់តែប៉ះ • គណនាផ្ទាល់ពីទីផ្សារពិត",
+        }
+
     def _compute_true_triggers(self, price: float, spread: float, ema20: float, ema50: float, candles: list, smc: dict) -> tuple[float, float]:
-        """ធានា 100% ថា BUY Trigger > price ហើយ SELL Trigger < price ជានិច្ច"""
         min_gap = max(spread * 1.2, 0.35)
         recent = candles[-12:] if candles else []
         swing_hi = max((_safe_float(c.get("high"), price) for c in recent), default=price + 1.5)
@@ -1158,8 +1143,7 @@ class GoldBrainService:
             entry_state, entry_km = "EXTENDED", "ហួសចំណុច (ដាក់ Limit)"
             entry_p = round(ema20 + atr_val * 0.20, 2) if side == "BUY" else round(ema20 - atr_val * 0.20, 2)
 
-        # ធានា SL ធំជាង Spread គ្រប់គ្រាន់ (យ៉ាងតិច 4x Spread)
-        min_sl = max(atr_val * (0.95 if is_scalp else 1.10), spd * 4.0, 2.00)
+        min_sl = max(atr_val * (0.90 if is_scalp else 1.05), spd * 3.5, 2.00)
         max_sl = max(min_sl * 1.85, atr_val * (1.75 if is_scalp else 2.20))
         buf = max(atr_val * 0.25, spd * 0.8)
         tp1_mult, tp2_mult = (1.65, 2.60) if is_scalp else (2.0, 3.2)
@@ -1169,65 +1153,53 @@ class GoldBrainService:
             for ob in (smc.get("demand_blocks") or []):
                 ob_bot = _safe_float(ob.get("bottom"), 0.0)
                 if 0 < ob_bot < entry_p and (entry_p - ob_bot) <= max_sl * 1.1:
-                    anchor_low = min(anchor_low, ob_bot)
-                    break
+                    anchor_low = min(anchor_low, ob_bot); break
             sl_dist = max(min_sl, min(max_sl, entry_p - (anchor_low - buf)))
-            sl_p = round(entry_p - sl_dist, 2)
-            tp1_p = round(entry_p + sl_dist * tp1_mult, 2)
-            tp2_p = round(entry_p + sl_dist * tp2_mult, 2)
+            sl_p, tp1_p, tp2_p = round(entry_p - sl_dist, 2), round(entry_p + sl_dist * tp1_mult, 2), round(entry_p + sl_dist * tp2_mult, 2)
             for sob in (smc.get("supply_blocks") or []):
                 sob_bot = _safe_float(sob.get("bottom"), 0.0)
-                if entry_p + sl_dist * 1.50 < sob_bot < tp1_p:
+                if entry_p + sl_dist * 1.25 < sob_bot < tp1_p:
                     tp1_p = round(sob_bot - 0.35, 2); break
             pdh = _safe_float(inst.get("pdh"), 0.0)
-            if pdh > 0 and entry_p + sl_dist * 1.50 < pdh < tp1_p:
+            if pdh > 0 and entry_p + sl_dist * 1.25 < pdh < tp1_p:
                 tp1_p = round(pdh - 0.35, 2)
-            if tp1_p <= entry_p + 0.5:
-                tp1_p = round(entry_p + sl_dist * 1.6, 2)
-            if tp2_p <= tp1_p + 0.6:
-                tp2_p = round(tp1_p + sl_dist, 2)
-            be_trigger = round(entry_p + (tp1_p - entry_p) * 0.50, 2)
+            if tp1_p <= entry_p + 0.5: tp1_p = round(entry_p + sl_dist * 1.6, 2)
+            if tp2_p <= tp1_p + 0.6: tp2_p = round(tp1_p + sl_dist, 2)
         else:
             anchor_high = swing_high
             for sob in (smc.get("supply_blocks") or []):
                 sob_top = _safe_float(sob.get("top"), 0.0)
                 if sob_top > entry_p and (sob_top - entry_p) <= max_sl * 1.1:
-                    anchor_high = max(anchor_high, sob_top)
-                    break
+                    anchor_high = max(anchor_high, sob_top); break
             sl_dist = max(min_sl, min(max_sl, (anchor_high + buf) - entry_p))
-            sl_p = round(entry_p + sl_dist, 2)
-            tp1_p = round(entry_p - sl_dist * tp1_mult, 2)
-            tp2_p = round(entry_p - sl_dist * tp2_mult, 2)
+            sl_p, tp1_p, tp2_p = round(entry_p + sl_dist, 2), round(entry_p - sl_dist * tp1_mult, 2), round(entry_p - sl_dist * tp2_mult, 2)
             for ob in (smc.get("demand_blocks") or []):
                 ob_top = _safe_float(ob.get("top"), 0.0)
-                if tp1_p < ob_top < entry_p - sl_dist * 1.50:
+                if tp1_p < ob_top < entry_p - sl_dist * 1.25:
                     tp1_p = round(ob_top + 0.35, 2); break
             pdl = _safe_float(inst.get("pdl"), 0.0)
-            if pdl > 0 and tp1_p < pdl < entry_p - sl_dist * 1.50:
+            if pdl > 0 and tp1_p < pdl < entry_p - sl_dist * 1.25:
                 tp1_p = round(pdl + 0.35, 2)
-            if tp1_p >= entry_p - 0.5:
-                tp1_p = round(entry_p - sl_dist * 1.6, 2)
-            if tp2_p >= tp1_p - 0.6:
-                tp2_p = round(tp1_p - sl_dist, 2)
-            be_trigger = round(entry_p - (entry_p - tp1_p) * 0.50, 2)
+            if tp1_p >= entry_p - 0.5: tp1_p = round(entry_p - sl_dist * 1.6, 2)
+            if tp2_p >= tp1_p - 0.6: tp2_p = round(tp1_p - sl_dist, 2)
 
+        be_trigger = round((entry_p + tp1_p) / 2.0, 2)
         rr1_val = round(abs(tp1_p - entry_p) / max(sl_dist, 0.1), 2)
         rr2_val = round(abs(tp2_p - entry_p) / max(sl_dist, 0.1), 2)
-        risk_pct = 1.0 if grade == "A+" else (0.75 if grade == "A" else 0.5)
         return {
-            "entry": entry_p, "sl": sl_p, "tp": tp1_p, "tp1": tp1_p, "tp2": tp2_p,
-            "be_trigger": be_trigger, "partial_close_pct": 60,
+            "entry": entry_p, "sl": sl_p, "be_trigger": be_trigger,
+            "tp": tp1_p, "tp1": tp1_p, "tp2": tp2_p,
             "sl_dist": round(sl_dist, 2), "sl_pips": int(round(sl_dist * 10)),
             "tp_pips": int(round(abs(tp1_p - entry_p) * 10)), "tp2_pips": int(round(abs(tp2_p - entry_p) * 10)),
             "rr_num": rr1_val, "rr": f"{rr1_val:.1f} : 1", "rr2": f"{rr2_val:.1f} : 1",
             "entry_state": entry_state, "entry_km": entry_km,
-            "exit_km": f"ដល់ ${be_trigger:.2f} រំកិល SL ស្មើដើម • កាត់ 60% នៅ ${tp1_p:.2f} ទុកសល់រត់ទៅ ${tp2_p:.2f}",
-            "suggested_risk_pct": risk_pct,
+            "exit_km": f"ដល់ ${be_trigger:.2f} រំកិល BE • កាត់ 50% នៅ ${tp1_p:.2f}",
+            "suggested_risk_pct": 1.0 if grade == "A+" else (0.75 if grade in ("A", "B+") else 0.5),
         }
 
     def evaluate(self, df_1h: pd.DataFrame, payload: dict, session: requests.Session | None = None) -> dict:
         self._ensure_model()
-        global_news, war_news, fred_macro, raw_m, feat_m = self._get_external_context_fast()
+        global_news, war_news, raw_m, feat_m = self._get_external_context_fast()
 
         hard_blocks, trap_blocks, soft_warnings = [], [], []
         buy_reasons, sell_reasons = [], []
@@ -1244,34 +1216,23 @@ class GoldBrainService:
         inst = payload.get("inst_levels") or {}
         smc = payload.get("smc") or {}
         candles = payload.get("candles") or []
-        order_flow = payload.get("order_flow") or {}
-        sanity = payload.get("sanity") or {}
 
         now_utc = datetime.now(timezone.utc)
         session_kz = _get_session_killzone(now_utc)
 
-        macro_snapshot = {
-            "dxy": None,
-            "us10y": fred_macro.get("us10y"),
-            "vix": None,
-            "real10": fred_macro.get("real10"),
-            "cpi_yoy": fred_macro.get("cpi_yoy"),
-            "unemployment": fred_macro.get("unemployment"),
-            "fed_rate": fred_macro.get("fed_rate"),
-            "fred_bias": fred_macro.get("bias", "NEUTRAL"),
-        }
+        macro_snapshot = {"dxy": None, "us10y": None, "vix": None, "real10": None}
         dxy_r1, us10y_d5 = 0.0, 0.0
         ai_prob, ai_pct, cand_side, bar_time, v8_agreement = None, None, 0, None, 0.0
         v8_res, r0 = None, None
 
         if raw_m is not None and not raw_m.empty:
             last_m = raw_m.iloc[-1]
-            macro_snapshot["dxy"] = round(float(last_m["dxy"]), 2) if pd.notna(last_m.get("dxy")) else None
-            macro_snapshot["vix"] = round(float(last_m["vix"]), 2) if pd.notna(last_m.get("vix")) else None
-            if macro_snapshot["us10y"] is None and pd.notna(last_m.get("us10y")):
-                macro_snapshot["us10y"] = round(float(last_m["us10y"]), 2)
-            if macro_snapshot["real10"] is None and pd.notna(last_m.get("real10")):
-                macro_snapshot["real10"] = round(float(last_m["real10"]), 2)
+            macro_snapshot = {
+                "dxy": round(float(last_m["dxy"]), 2) if pd.notna(last_m.get("dxy")) else None,
+                "us10y": round(float(last_m["us10y"]), 2) if pd.notna(last_m.get("us10y")) else None,
+                "vix": round(float(last_m["vix"]), 2) if pd.notna(last_m.get("vix")) else None,
+                "real10": round(float(last_m["real10"]), 2) if pd.notna(last_m.get("real10")) else None,
+            }
         if feat_m is not None and not feat_m.empty:
             lf = feat_m.iloc[-1]
             dxy_r1, us10y_d5 = _safe_float(lf.get("dxy_r1"), 0.0), _safe_float(lf.get("us10y_d5"), 0.0)
@@ -1281,7 +1242,7 @@ class GoldBrainService:
         min_pct = _safe_float(self.bundle.get("min_percentile", 0.50), 0.50) if self.bundle else 0.50
         a_plus_pct = _safe_float(self.bundle.get("grade_a_plus_pct", 0.65), 0.65) if self.bundle else 0.65
 
-        if self.bundle is None:
+        if self.bundle is None or core is None:
             soft_warnings.append("ម៉ូដែល V8 មិនទាន់ផ្ទុក — កំពុងប្រើ Quant Structure")
         elif df_1h is not None and len(df_1h) >= 60:
             try:
@@ -1308,33 +1269,27 @@ class GoldBrainService:
 
         market_state = self._describe_market(r0, payload, global_news, war_news, session_kz)
 
-        # ---------- HARD SAFETY GATES (LAYER 3 + GLITCH PROTECTION) ----------
+        # ---------- HARD SAFETY GATES ----------
         if price <= 0:
             hard_blocks.append("មិនទាន់ទទួលបានតម្លៃមាសផ្ទាល់")
         if _is_forex_weekend_closed(now_utc):
             hard_blocks.append("ទីផ្សារ Forex បិទចុងសប្តាហ៍ (បើកអាទិត្យ 22:00 UTC)")
-        if sanity.get("glitch_detected"):
-            hard_blocks.append(f"រកឃើញតម្លៃលោតខុសប្រក្រតី ({sanity.get('note', 'Cross-Source Mismatch')}) — ផ្អាកការជួញដូរ")
         if cal_news.get("danger"):
             ev = cal_news.get("danger_event") or {}
             hard_blocks.append(f"ព័ត៌មានក្រហម USD ({ev.get('title', 'Red News')}) ជិតចេញ")
         if spread > 1.50:
             hard_blocks.append(f"Spread រីកខ្ពស់ខ្លាំង (${spread:.2f}) — ហានិភ័យ Slippage")
         elif spread > 0.80:
-            soft_warnings.append(f"Spread រាងធំ (${spread:.2f}) — គួរប្រើ Lot តូច (0.5%)")
-        if interval_key in ("1m", "5m"):
-            soft_warnings.append(f"Timeframe {interval_key} មាន Noise ខ្ពស់ — 15m/1H មានស្ថិរភាពជាង")
+            soft_warnings.append(f"Spread រាងធំ (${spread:.2f}) — គួរប្រើ Lot តូច")
 
-        # ---------- PILLAR 2: MICROSTRUCTURE + ORDER FLOW + SMC + MTF (Max 45 pts) ----------
-        ms = self._analyze_microstructure(candles, price, ema20, ema50, atr_chart, smc, order_flow=order_flow)
+        # ---------- PILLAR 2: MICROSTRUCTURE + BULLISH/BEARISH OB + MTF (Max 45 pts) ----------
+        ms = self._analyze_microstructure(candles, price, ema20, ema50, atr_chart, smc)
         p2_buy, p2_sell = ms["buy_pts"], ms["sell_pts"]
         buy_reasons.extend(ms["notes_buy"]); sell_reasons.extend(ms["notes_sell"])
 
         smc_bias = smc.get("bias", "NEUTRAL")
-        if smc_bias == "BULLISH":
-            p2_buy += 8
-        elif smc_bias == "BEARISH":
-            p2_sell += 8
+        if smc_bias == "BULLISH": p2_buy += 8
+        elif smc_bias == "BEARISH": p2_sell += 8
 
         tfs = {t.get("label"): t.get("bias") for t in (mtf.get("timeframes") or [])}
         htf_buy = sum(1 for k in ("1H", "4H", "1D") if tfs.get(k) == "BUY")
@@ -1351,8 +1306,8 @@ class GoldBrainService:
         if ms["falling_knife"]: p1_buy = int(p1_buy * 0.40)
         if ms["rising_rocket"]: p1_sell = int(p1_sell * 0.40)
 
-        # ---------- PILLAR 3: FRED MACRO + NEWS + WAR + KILLZONE (Max 25 pts) ----------
-        fund = self._score_fundamentals(dxy_r1, us10y_d5, macro_snapshot.get("vix"), fred_macro, global_news, war_news)
+        # ---------- PILLAR 3: MACRO + NEWS + KILLZONE (Max 25 pts) ----------
+        fund = self._score_fundamentals(dxy_r1, us10y_d5, macro_snapshot.get("vix"), global_news, war_news, session_kz)
         p3_buy, p3_sell = fund["buy_pts"], fund["sell_pts"]
         buy_reasons.extend(fund["notes_buy"]); sell_reasons.extend(fund["notes_sell"])
 
@@ -1361,12 +1316,12 @@ class GoldBrainService:
         if rsi >= 72.0: buy_pts = max(0, buy_pts - 8)
         if rsi <= 28.0: sell_pts = max(0, sell_pts - 8)
 
-        # ---------- DECISION & INSTITUTIONAL CONFLUENCE ----------
+        # ---------- DECISION & SNIPER VERIFICATION ----------
         margin = buy_pts - sell_pts
         with self._lock:
             prev_mem = self._last_signal_mem.get(interval_key)
         was_same = prev_mem is not None and (time.monotonic() - prev_mem["ts"]) < 90.0
-        base_thresh = 50 if interval_key in ("1m", "5m") else 48
+        base_thresh = 46 if interval_key in ("1m", "5m") else 48
         buy_thresh = (base_thresh - 4) if (was_same and prev_mem["side"] == "BUY") else base_thresh
         sell_thresh = (base_thresh - 4) if (was_same and prev_mem["side"] == "SELL") else base_thresh
 
@@ -1381,33 +1336,21 @@ class GoldBrainService:
         bias_for_preview = candidate_side if candidate_side != "NONE" else ("BUY" if price > ema_top else ("SELL" if price < ema_bot else ("BUY" if buy_pts >= sell_pts else "SELL")))
         preview_plan = self._build_precision_plan(bias_for_preview, price, payload, atr_chart, spread, inst, "A", is_scalp=is_scalp) if price > 0 else None
 
-        # ---------- របាំងដែក Sniper (Layers 1 & 4) ----------
         real_risk_blocks = []
         if candidate_side == "BUY":
-            if price < ema_bot:
-                real_risk_blocks.append(f"ហាម BUY បញ្ច្រាស Trend៖ តម្លៃនៅក្រោម EMA 20/50 (${ema_bot:.2f})")
-            elif ms["falling_knife"] or (price < ema20 and not ms["bull_reversal"]):
-                real_risk_blocks.append("ហាមចាប់កាំបិតធ្លាក់ — ចាំឡើងផុត EMA 20 សិន")
-            if rsi >= 76.0:
-                real_risk_blocks.append(f"RSI ({rsi:.0f}) ខ្ពស់ជ្រុល — ចាំថយសិន")
-            if preview_plan and preview_plan.get("rr_num", 2.0) < 1.50:
-                trap_blocks.append(f"R:R ទាប ({preview_plan['rr']}) — ត្រូវការយ៉ាងតិច 1.5 : 1")
+            if price < ema_bot: real_risk_blocks.append(f"ហាម BUY បញ្ច្រាស Trend៖ តម្លៃនៅក្រោម EMA 20/50 (${ema_bot:.2f})")
+            elif ms["falling_knife"] or (price < ema20 and not ms["bull_reversal"]): real_risk_blocks.append("ហាមចាប់កាំបិតធ្លាក់ — ចាំឡើងផុត EMA 20 សិន")
+            if rsi >= 76.0: real_risk_blocks.append(f"RSI ({rsi:.0f}) ខ្ពស់ជ្រុល — ចាំថយសិន")
+            if preview_plan and preview_plan.get("rr_num", 2.0) < 1.35: trap_blocks.append(f"R:R ទាប ({preview_plan['rr']}) — ជាប់តំបន់ទប់លើ")
         elif candidate_side == "SELL":
-            if price > ema_top:
-                real_risk_blocks.append(f"ហាម SELL បញ្ច្រាស Trend៖ តម្លៃនៅលើ EMA 20/50 (${ema_top:.2f})")
-            elif ms["rising_rocket"] or (price > ema20 and not ms["bear_reversal"]):
-                real_risk_blocks.append("ហាមទប់ឡាន — ចាំធ្លាក់ក្រោម EMA 20 សិន")
-            if rsi <= 24.0:
-                real_risk_blocks.append(f"RSI ({rsi:.0f}) ទាបជ្រុល — ចាំងើបសិន")
-            if preview_plan and preview_plan.get("rr_num", 2.0) < 1.50:
-                trap_blocks.append(f"R:R ទាប ({preview_plan['rr']}) — ត្រូវការយ៉ាងតិច 1.5 : 1")
+            if price > ema_top: real_risk_blocks.append(f"ហាម SELL បញ្ច្រាស Trend៖ តម្លៃនៅលើ EMA 20/50 (${ema_top:.2f})")
+            elif ms["rising_rocket"] or (price > ema20 and not ms["bear_reversal"]): real_risk_blocks.append("ហាមទប់ឡាន — ចាំធ្លាក់ក្រោម EMA 20 សិន")
+            if rsi <= 24.0: real_risk_blocks.append(f"RSI ({rsi:.0f}) ទាបជ្រុល — ចាំងើបសិន")
+            if preview_plan and preview_plan.get("rr_num", 2.0) < 1.35: trap_blocks.append(f"R:R ទាប ({preview_plan['rr']}) — ជាប់តំបន់ទ្រក្រោម")
 
-        # គណនា Trigger ពិតប្រាកដ (BUY > price, SELL < price 100%)
         buy_trig, sell_trig = self._compute_true_triggers(price, spread, ema20, ema50, candles, smc)
 
         high_conf_alert, sniper_text_km, close_confirmed = False, "", False
-        confluence_checks = {"trend_close": False, "orderflow_mtf": False, "macro_news": not bool(hard_blocks), "risk_rr": False}
-
         if hard_blocks or real_risk_blocks:
             status, can_trade, grade, final_side, is_danger = "BLOCKED", False, "RISK", "NONE", True
             confidence_score = 20
@@ -1438,29 +1381,11 @@ class GoldBrainService:
             confidence_score = raw_score
             plan = self._build_precision_plan(final_side, price, payload, atr_chart, spread, inst, grade, is_scalp=(grade == "B"))
 
-            # ផ្ទៀងផ្ទាត់ 4-Layer Institutional Confluence Rules
             mtf_not_opp = (final_side == "BUY" and mtf.get("aligned") != "SELL" and htf_sell < 2) or (final_side == "SELL" and mtf.get("aligned") != "BUY" and htf_buy < 2)
-            flow_aligned = (final_side == "BUY" and ms["buy_pressure_pct"] >= 55) or (final_side == "SELL" and ms["buy_pressure_pct"] <= 45)
-            risk_ok = bool(plan and plan.get("rr_num", 0.0) >= 1.50 and plan.get("sl_dist", 0.0) >= max(spread * 4.0, 1.5))
-
-            confluence_checks = {
-                "trend_close": bool(close_confirmed),
-                "orderflow_mtf": bool(flow_aligned and mtf_not_opp),
-                "macro_news": bool(not hard_blocks and spread <= 1.20),
-                "risk_rr": risk_ok,
-            }
-
-            if (
-                grade in ("A+", "A") and confidence_score >= 68
-                and all(confluence_checks.values())
-                and plan and plan.get("entry_state") == "IN_ZONE"
-            ):
+            if grade in ("A+", "A") and confidence_score >= 68 and close_confirmed and mtf_not_opp and plan and plan.get("entry_state") == "IN_ZONE" and plan.get("rr_num", 0.0) >= 1.5:
                 high_conf_alert = True
                 act_word = "ទិញ (BUY)" if final_side == "BUY" else "លក់ (SELL)"
-                sniper_text_km = (
-                    f"🔥 ឱកាសខ្ពស់ {confidence_score}% ({grade}) • គួរ{act_word} នៅ ${plan['entry']:.2f} "
-                    f"| SL ${plan['sl']:.2f} | TP1 ${plan['tp']:.2f} (Risk {plan['suggested_risk_pct']}%)"
-                )
+                sniper_text_km = f"🔥 ឱកាសខ្ពស់ {confidence_score}% ({grade}) • គួរ{act_word} នៅ ${plan['entry']:.2f} | SL ${plan['sl']:.2f} | TP1 ${plan['tp']:.2f}"
 
             side_km = "ទិញ (BUY)" if final_side == "BUY" else "លក់ (SELL)"
             conf_tag = "បិទទៀនបញ្ជាក់" if close_confirmed else "ទៀនកំពុងរត់"
@@ -1473,23 +1398,35 @@ class GoldBrainService:
             reasons = (pass_reasons[:3] if pass_reasons else ["សញ្ញាបច្ចេកទេសស្របគ្នា"]) + soft_warnings
             toast_detail_km = sniper_text_km or " • ".join(reasons[:2])
 
-        # អាប់ដេត Auto Forward-Test Win-Rate Tracker ពិតប្រាកដ (មានការពារ Same-Candle Fakeout)
-        last_c = candles[-1] if candles else {}
-        last_hi = _safe_float(last_c.get("high"), price)
-        last_lo = _safe_float(last_c.get("low"), price)
-        last_cts = int(_safe_float(last_c.get("time"), 0))
-        sniper_rec = {"side": final_side, "entry": plan["entry"], "sl": plan["sl"], "tp": plan["tp"]} if (high_conf_alert and plan) else None
-        signal_stats = self.tracker.update_and_record(interval_key, price, last_hi, last_lo, last_cts, sniper_rec)
+        # Live Exit Shield + Beginner 4-Rule Guide + Cost-Adjusted Fill-Aware Audit Tracker
+        exit_shield = self._compute_exit_shield(price, ema20, rsi, spread, ms, smc, cal_news, final_side if can_trade else "NONE")
+        beginner_guide = self._build_beginner_guide(
+            price, interval_key, market_state, smc, candles,
+            final_side, can_trade, plan, preview_plan,
+            buy_trig, sell_trig, global_news, war_news, macro_snapshot
+        )
+        last_hi = _safe_float(candles[-1].get("high"), price) if candles else price
+        last_lo = _safe_float(candles[-1].get("low"), price) if candles else price
+        audit_rec = (
+            {
+                "side": final_side, "grade": grade, "confidence": int(confidence_score),
+                "is_sniper": high_conf_alert, "entry_state": plan.get("entry_state", "IN_ZONE"),
+                "entry": plan["entry"], "sl": plan["sl"], "tp": plan["tp"],
+            }
+            if (can_trade and plan)
+            else None
+        )
+        signal_stats = self.tracker.update_and_record(
+            interval_key, price, last_hi, last_lo, audit_rec, spread=spread
+        )
 
         return {
-            "version": f"{self.bundle.get('version', 'V8')}-QUANT-V10.4" if self.bundle else "V10.4-QUANT",
+            "version": f"{self.bundle.get('version', 'V8')}-FINAL-V10.6" if self.bundle else "V10.6-FINAL",
             "deployable": bool(self.bundle.get("deployable", False)) if self.bundle else False,
             "tactical_mode": "V8_CONFIRMED" if (can_trade and v8_confirmed_side == final_side) else ("SCALP" if (can_trade and grade == "B") else ("QUANT_CONFLUENCE" if can_trade else "WAIT")),
             "status": status, "grade": grade, "is_danger": is_danger,
             "high_conf_alert": high_conf_alert, "close_confirmed": close_confirmed,
-            "buy_pressure_pct": ms["buy_pressure_pct"], "order_flow_source": ms["order_flow_source"],
-            "confluence_checks": confluence_checks,
-            "sniper_text_km": sniper_text_km,
+            "buy_pressure_pct": ms["buy_pressure_pct"], "sniper_text_km": sniper_text_km,
             "confidence_score": int(confidence_score), "action_km": action_km,
             "hud_hint_km": hud_hint_km, "toast_detail_km": toast_detail_km,
             "can_trade": can_trade, "side": final_side,
@@ -1498,7 +1435,9 @@ class GoldBrainService:
             "v8_agreement_pct": int(round(v8_agreement * 100)) if v8_res else None,
             "cutoff_pct": round(min_pct * 100, 0), "bar_time": bar_time,
             "session_edge": session_kz, "liquidity_sweep": ms["sweep_note"],
-            "market_state": market_state, "reasons": reasons, "passed": pass_reasons, "warnings": soft_warnings,
+            "market_state": market_state, "exit_shield": exit_shield,
+            "beginner_guide": beginner_guide,
+            "reasons": reasons, "passed": pass_reasons, "warnings": soft_warnings,
             "plan": plan, "preview_plan": preview_plan, "signal_stats": signal_stats,
             "pillars": {
                 "v8_ai": {"buy": p1_buy, "sell": p1_sell, "max": 30},
@@ -1506,8 +1445,7 @@ class GoldBrainService:
                 "macro_news": {"buy": p3_buy, "sell": p3_sell, "max": 25},
             },
             "score_breakdown": {"buy_pts": buy_pts, "sell_pts": sell_pts, "margin": margin, "candidate_side": candidate_side},
-            "macro": macro_snapshot, "fred_macro": fred_macro,
-            "global_news": global_news, "war_news": war_news,
+            "macro": macro_snapshot, "global_news": global_news, "war_news": war_news,
         }
 
 

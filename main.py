@@ -1,11 +1,11 @@
 # ==========================================================
-# main.py - TRI PISAL Gold XAU/USD Pro Terminal (V10.4 Institutional Quant)
+# main.py - TRI PISAL Gold XAU/USD Pro Terminal (V10.6 Final Hardened)
 # ពង្រឹងបន្ថែម៖
-#   1) Real-Time Order Flow Engine (Binance aggTrades + OKX Trades)
-#   2) Cross-Source Sanity Check (Swissquote vs Binance vs OKX Glitch Filter)
-#   3) Dual Economic Calendar (ForexFactory + Finnhub Free Tier)
-#   4) Real Volume in Candles + Parallel Extras & asyncio.gather Broadcaster
-#   5) Full Sync with brain_service.py V10.4 (FRED, 4-Layer Confluence, BE@50%TP1)
+#   1) Zero-Deadlock Multi-Pool Architecture (mtf / extras / io)
+#   2) Real-Time Order Flow Engine (Binance aggTrades + OKX Trades)
+#   3) Thread-Safe Cross-Source Sanity Check (Swissquote vs Binance vs OKX)
+#   4) Dual Economic Calendar (ForexFactory + Finnhub Free Tier)
+#   5) Full Sync with brain_service.py V10.6 (OB-Sync, Exit Shield, Real Audit)
 # ==========================================================
 import os
 import re
@@ -62,7 +62,7 @@ http_session = requests.Session()
 adapter = HTTPAdapter(pool_connections=16, pool_maxsize=32, max_retries=1)
 http_session.mount("https://", adapter)
 http_session.mount("http://", adapter)
-http_session.headers.update({"User-Agent": "TriPisalGoldTerminal/10.4"})
+http_session.headers.update({"User-Agent": "TriPisalGoldTerminal/10.6-Final"})
 
 OANDA_API_KEY = os.getenv("OANDA_API_KEY", "").strip()
 TWELVE_DATA_KEY = os.getenv("TWELVE_DATA_API_KEY", "").strip()
@@ -124,10 +124,15 @@ class SafeCache:
 
 
 cache = SafeCache()
-mtf_executor = ThreadPoolExecutor(max_workers=4)
-extras_executor = ThreadPoolExecutor(max_workers=6)
+# បំបែក 3 ThreadPools ដាច់ដោយឡែក ដើម្បីការពារ Deadlock ១០០%
+mtf_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="mtf")
+extras_executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix="extras")
+io_executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix="io")
+
 _basis_lock = threading.Lock()
 _last_valid_basis = 0.0
+
+_quote_state_lock = threading.Lock()
 _last_quote_state = {"price": 0.0, "ts": 0.0}
 
 
@@ -300,7 +305,7 @@ def fetch_live_quote() -> dict | None:
 
 # ==================== REAL-TIME ORDER FLOW ENGINE (BINANCE + OKX) ====================
 def _fetch_binance_order_flow() -> tuple[float, float, int]:
-    """Binance aggTrades: m=False មានន័យថា Taker Buy (កម្លាំងទិញរុញឡើង), m=True ជា Taker Sell"""
+    """Binance aggTrades: m=False -> Taker Buy, m=True -> Taker Sell"""
     try:
         url = "https://data-api.binance.vision/api/v3/aggTrades?symbol=PAXGUSDT&limit=100"
         res = http_session.get(url, timeout=(2.0, 3.0))
@@ -321,7 +326,7 @@ def _fetch_binance_order_flow() -> tuple[float, float, int]:
 
 
 def _fetch_okx_order_flow() -> tuple[float, float, int]:
-    """OKX recent trades: side='buy' ជាកម្លាំងទិញ, side='sell' ជាកម្លាំងលក់"""
+    """OKX recent trades: side='buy' -> Buy, side='sell' -> Sell"""
     try:
         url = "https://www.okx.com/api/v5/market/trades?instId=XAUT-USDT&limit=80"
         res = http_session.get(url, timeout=(2.0, 3.0))
@@ -342,8 +347,9 @@ def _fetch_okx_order_flow() -> tuple[float, float, int]:
 
 
 def _fetch_order_flow_raw() -> dict:
-    f_bn = extras_executor.submit(_fetch_binance_order_flow)
-    f_okx = extras_executor.submit(_fetch_okx_order_flow)
+    # ប្រើ io_executor ដាច់ដោយឡែក ការពារ Deadlock ១០០%
+    f_bn = io_executor.submit(_fetch_binance_order_flow)
+    f_okx = io_executor.submit(_fetch_okx_order_flow)
     try:
         bn_b, bn_s, bn_n = f_bn.result(timeout=3.5)
     except Exception:
@@ -380,11 +386,12 @@ def fetch_order_flow() -> dict:
     return res or {"buy_pct": 50.0, "sell_pct": 50.0, "buy_vol": 0.0, "sell_vol": 0.0, "trades_count": 0, "source": "CANDLES"}
 
 
-# ==================== CROSS-SOURCE SANITY CHECK (GLITCH PROTECTION) ====================
+# ==================== THREAD-SAFE CROSS-SOURCE SANITY CHECK ====================
 def _fetch_cross_prices_raw() -> dict:
-    f_sq = extras_executor.submit(_fetch_swissquote_xau)
-    f_bn = extras_executor.submit(_fetch_binance_paxg_ticker)
-    f_okx = extras_executor.submit(_fetch_okx_xaut_ticker)
+    # ប្រើ io_executor ដាច់ដោយឡែក ការពារ Deadlock ១០០%
+    f_sq = io_executor.submit(_fetch_swissquote_xau)
+    f_bn = io_executor.submit(_fetch_binance_paxg_ticker)
+    f_okx = io_executor.submit(_fetch_okx_xaut_ticker)
     out = {}
     for name, fut in (("swissquote", f_sq), ("binance", f_bn), ("okx", f_okx)):
         try:
@@ -397,19 +404,20 @@ def _fetch_cross_prices_raw() -> dict:
 
 
 def check_cross_source_sanity(live_price: float, basis: float = 0.0) -> dict:
-    global _last_quote_state
     now = time.monotonic()
     spike_glitch = False
     spike_note = ""
 
-    # 1) ពិនិត្យការលោតតម្លៃភ្លាមៗខុសធម្មតា (> $35 ក្នុងរយៈពេលក្រោម 20 វិនាទី)
-    if _last_quote_state["price"] > 1000 and (now - _last_quote_state["ts"]) < 20.0:
-        jump = abs(live_price - _last_quote_state["price"])
-        if jump > 35.0:
-            spike_glitch = True
-            spike_note = f"តម្លៃលោតខុសធម្មតា ${jump:.2f} ភ្លាមៗ"
-    if live_price > 1000 and not spike_glitch:
-        _last_quote_state = {"price": live_price, "ts": now}
+    # 1) ពិនិត្យការលោតតម្លៃភ្លាមៗខុសធម្មតា (> $35 ក្នុងរយៈពេលក្រោម 20 វិនាទី) ដោយប្រើ Lock
+    with _quote_state_lock:
+        if _last_quote_state["price"] > 1000 and (now - _last_quote_state["ts"]) < 20.0:
+            jump = abs(live_price - _last_quote_state["price"])
+            if jump > 35.0:
+                spike_glitch = True
+                spike_note = f"តម្លៃលោតខុសធម្មតា ${jump:.2f} ភ្លាមៗ"
+        if live_price > 1000 and not spike_glitch:
+            _last_quote_state["price"] = live_price
+            _last_quote_state["ts"] = now
 
     # 2) ផ្ទៀងផ្ទាត់តម្លៃរវាងប្រភពច្រើន (Swissquote vs Binance vs OKX)
     cross = cache.get_or_fetch("cross_sanity", 12.0, _fetch_cross_prices_raw) or {}
@@ -428,7 +436,6 @@ def check_cross_source_sanity(live_price: float, basis: float = 0.0) -> dict:
     if len(adjusted) >= 2 and live_price > 1000:
         med = float(np.median(adjusted))
         max_dev = round(abs(live_price - med), 2)
-        # បើតម្លៃខុសពី Median នៃប្រភពផ្សេងលើស $25 → មានហានិភ័យ Feed Glitch
         if max_dev > 25.0:
             cross_glitch = True
             cross_note = f"តម្លៃខុសគ្នារវាងប្រភព ${max_dev:.2f}"
@@ -1281,13 +1288,24 @@ def calculate_indicators(df: pd.DataFrame) -> dict:
 
 
 def _evaluate_brain_v8(payload: dict, basis: float = 0.0) -> dict:
-    df_1h, _, _, raw_1h = fetch_gold_data("1h")
-    if df_1h is not None and not df_1h.empty:
-        df_1h = df_1h.copy()
-        if basis != 0.0 and raw_1h not in ("OANDA", "TWELVE"):
-            for col in ("open", "high", "low", "close"):
-                df_1h[col] = df_1h[col] + basis
-    return brain_service.evaluate(df_1h, payload)
+    try:
+        df_1h, _, _, raw_1h = fetch_gold_data("1h")
+        if df_1h is not None and not df_1h.empty:
+            df_1h = df_1h.copy()
+            if basis != 0.0 and raw_1h not in ("OANDA", "TWELVE"):
+                for col in ("open", "high", "low", "close"):
+                    df_1h[col] = df_1h[col] + basis
+        return brain_service.evaluate(df_1h, payload)
+    except Exception as e:
+        print(f"[BRAIN_EVAL] fallback after error: {e}")
+        return {
+            "version": "V10.6-FALLBACK",
+            "status": "WAIT", "grade": "WATCH", "can_trade": False, "side": "NONE",
+            "is_danger": False, "confidence_score": 35,
+            "action_km": "⏳ កំពុងភ្ជាប់ខួរក្បាល AI ឡើងវិញ...",
+            "hud_hint_km": "កំពុងសមកាលកម្មទិន្នន័យ...",
+            "reasons": ["កំពុងសមកាលកម្មទិន្នន័យឡើងវិញ សូមរង់ចាំបន្តិច"],
+        }
 
 
 def attach_extras_sync(payload: dict) -> dict:
@@ -1295,18 +1313,24 @@ def attach_extras_sync(payload: dict) -> dict:
     basis = float(out.get("basis_offset") or 0.0)
     price = float(out.get("price") or 0.0)
 
-    # ទាញទិន្នន័យជំនួយទាំង ៥ ដំណាលគ្នាដើម្បីកាត់បន្ថយ Latency
+    # ទាញទិន្នន័យជំនួយទាំង ៥ ដំណាលគ្នា ដោយមាន Timeout & Safe Fallback
     f_mtf = extras_executor.submit(get_mtf_confluence)
     f_news = extras_executor.submit(fetch_usd_news)
     f_inst = extras_executor.submit(get_institutional_levels, basis)
     f_flow = extras_executor.submit(fetch_order_flow)
     f_san = extras_executor.submit(check_cross_source_sanity, price, basis)
 
-    out["mtf"] = f_mtf.result()
-    out["news"] = f_news.result()
-    out["inst_levels"] = f_inst.result()
-    out["order_flow"] = f_flow.result()
-    out["sanity"] = f_san.result()
+    def _safe_res(fut, default):
+        try:
+            return fut.result(timeout=9.0)
+        except Exception:
+            return default
+
+    out["mtf"] = _safe_res(f_mtf, {"timeframes": [], "verdict": "SYNC", "aligned": "MIXED", "warning": None, "buy_count": 0, "sell_count": 0})
+    out["news"] = _safe_res(f_news, {"danger": False, "danger_event": None, "upcoming": []})
+    out["inst_levels"] = _safe_res(f_inst, {"pdh": None, "pdl": None, "asian_high": None, "asian_low": None})
+    out["order_flow"] = _safe_res(f_flow, {"buy_pct": 50.0, "sell_pct": 50.0, "buy_vol": 0.0, "sell_vol": 0.0, "trades_count": 0, "source": "CANDLES"})
+    out["sanity"] = _safe_res(f_san, {"ok": True, "glitch_detected": False, "deviation": 0.0, "sources_checked": 0, "note": "OK"})
     out["brain"] = _evaluate_brain_v8(out, basis=basis)
     return out
 
@@ -1378,8 +1402,8 @@ def _warmup_caches():
         fetch_gold_data("1h")
         fetch_usd_news()
         fetch_order_flow()
-        brain_service.fetch_fred_macro()
-        print("[WARMUP] Core gold, Order Flow & FRED feeds pre-warmed (V10.4)")
+        brain_service._get_external_context_fast()
+        print("[WARMUP] Core gold, Order Flow, News & Macro feeds pre-warmed (V10.6 Final)")
     except Exception as e:
         print(f"[WARMUP] skipped: {e}")
 
@@ -1396,7 +1420,7 @@ async def broadcast_loop():
             if not clients:
                 continue
 
-            # អាប់ដេត Full Snapshot + AI Quant Sniper រៀងរាល់ 15 វិនាទី (Parallel គ្រប់ TF)
+            # អាប់ដេត Full Snapshot + AI V10.6 រៀងរាល់ 15 វិនាទី (Parallel គ្រប់ TF)
             if cycle % 6 == 0:
                 unique_tfs = list(set(tf for _, tf in clients))
                 results = await asyncio.gather(
@@ -1443,13 +1467,14 @@ async def lifespan(app: FastAPI):
         task.cancel()
         mtf_executor.shutdown(wait=False)
         extras_executor.shutdown(wait=False)
+        io_executor.shutdown(wait=False)
         http_session.close()
 
 
-app = FastAPI(title="TRI PISAL • Gold XAU/USD Pro Terminal (V10.4 Institutional Quant)", lifespan=lifespan)
+app = FastAPI(title="TRI PISAL • Gold XAU/USD Pro Terminal (V10.6 Final Hardened)", lifespan=lifespan)
 
 
-# ==================== AI CHAT ENGINE (V10.4) ====================
+# ==================== AI CHAT ENGINE (V10.6 SYNCED) ====================
 def generate_ai_reply(
     preset: str, data: dict, interval: str,
     mtf: dict, news: dict, inst: dict, brain: dict | None = None
@@ -1461,32 +1486,36 @@ def generate_ai_reply(
     gnews = brain.get("global_news") or {}
     wnews = brain.get("war_news") or {}
     macro = brain.get("macro") or {}
-    fred = brain.get("fred_macro") or {}
+    shield = brain.get("exit_shield") or {}
     pillars = brain.get("pillars") or {}
     stats = brain.get("signal_stats") or {}
     oflow = data.get("order_flow") or {}
 
     if preset == "brain_v8":
         rank_txt = f"{brain['ai_rank_pct']}%" if brain.get("ai_rank_pct") is not None else "--"
-        wr_txt = f"{stats['tf_win_rate']}% ({interval})" if stats.get("tf_win_rate") is not None else (f"{stats['win_rate']}% រួម" if stats.get("win_rate") is not None else "កំពុងប្រមូលស្ថិតិ")
+        wr_txt = (
+            f"{stats['tf_win_rate']}% ({interval})"
+            if stats.get("tf_win_rate") is not None
+            else (f"{stats['win_rate']}% រួម" if stats.get("win_rate") is not None else "កំពុងប្រមូលស្ថិតិ")
+        )
         lines = [
-            f"សេចក្តីសម្រេច V10.4៖ **{brain.get('action_km', 'កំពុងវិភាគ...')}** (AI Rank: **{rank_txt}** | Score: **{brain.get('confidence_score', '--')}%**)",
-            f"Order Flow ផ្ទាល់ ({oflow.get('source', 'LIVE')})៖ កម្លាំងទិញ **{brain.get('buy_pressure_pct', 50)}%** | ស្ថិតិ Win Rate៖ **{wr_txt}**",
-            f"FRED Macro ({fred.get('bias', 'NEUTRAL')})៖ US10Y **{macro.get('us10y') or '--'}%** | Real10Y **{macro.get('real10') or '--'}%** | CPI **{macro.get('cpi_yoy') or '--'}%** | Fed **{macro.get('fed_rate') or '--'}%**",
-            f"ព័ត៌មានពិភពលោក៖ **{gnews.get('bias', 'NEUTRAL')}** | សង្គ្រាម៖ **{wnews.get('level', 'LOW')}** | DXY **{macro.get('dxy') or '--'}**",
+            f"សេចក្តីសម្រេច V10.6៖ **{brain.get('action_km', 'កំពុងវិភាគ...')}** (AI Rank: **{rank_txt}** | Score: **{brain.get('confidence_score', '--')}%**)",
+            f"ប្រព័ន្ធការពារ (Exit Shield)៖ **{shield.get('title_km', 'សកម្ម')}** — {shield.get('action_km', '')}",
+            f"Order Flow ផ្ទាល់ ({oflow.get('source', 'LIVE')})៖ កម្លាំងទិញ **{oflow.get('buy_pct', brain.get('buy_pressure_pct', 50))}%** | ស្ថិតិ AI ពិត៖ **{wr_txt}**",
+            f"ម៉ាក្រូ & ព័ត៌មាន៖ DXY **{macro.get('dxy') or '--'}** | US10Y **{macro.get('us10y') or '--'}%** | VIX **{macro.get('vix') or '--'}** | សង្គ្រាម **{wnews.get('level', 'LOW')}**",
         ]
         if pillars:
             v8p = pillars.get("v8_ai", {})
             stp = pillars.get("structure_smc", {})
             mcp = pillars.get("macro_news", {})
-            lines.append(f"ពិន្ទុ ៣ សសរស្តម្ភ៖ V8 ({v8p.get('buy',0)}/{v8p.get('sell',0)}) • SMC ({stp.get('buy',0)}/{stp.get('sell',0)}) • Macro ({mcp.get('buy',0)}/{mcp.get('sell',0)})")
+            lines.append(f"ពិន្ទុ ៣ សសរស្តម្ភ៖ V8 ({v8p.get('buy',0)}/{v8p.get('sell',0)}) • OB/SMC ({stp.get('buy',0)}/{stp.get('sell',0)}) • Macro ({mcp.get('buy',0)}/{mcp.get('sell',0)})")
         pl = brain.get("plan") or brain.get("preview_plan")
         if pl:
             lines.append(f"ផែនការ៖ Entry **${pl['entry']}** | SL **${pl['sl']}** | TP1 **${pl['tp']}** | BE @ **${pl.get('be_trigger', '--')}**")
         for r in (brain.get("reasons") or [])[:2]:
             lines.append(f"មូលហេតុ៖ {r}")
         return {
-            "title": f"ខួរក្បាល AI V10.4 Quant • FRED + Order Flow + SMC ({brain.get('bar_time') or '1H'})",
+            "title": f"ខួរក្បាល AI V10.6 • OB/SMC + Order Flow + Macro ({brain.get('bar_time') or '1H'})",
             "badge": brain.get("status", "WAIT"),
             "lines": lines
         }
@@ -1503,7 +1532,7 @@ def generate_ai_reply(
     if preset == "news_check":
         g_line = f"ព័ត៌មានមាសពិភពលោក៖ **{gnews.get('bias', 'NEUTRAL')}** ({gnews.get('updated_at', '')})"
         w_line = f"ព័ត៌មានសង្គ្រាម៖ **{wnews.get('level', 'LOW')}** ({wnews.get('updated_at', '')})"
-        f_line = f"FRED ម៉ាក្រូអាមេរិក៖ **{fred.get('bias', 'NEUTRAL')}** — {fred.get('summary_km', '')}"
+        m_line = f"ម៉ាក្រូអាមេរិក៖ DXY **{macro.get('dxy') or '--'}** | US10Y **{macro.get('us10y') or '--'}%** | Real10Y **{macro.get('real10') or '--'}%**"
         if news["danger"] and news["danger_event"]:
             ev = news["danger_event"]
             return {
@@ -1511,21 +1540,21 @@ def generate_ai_reply(
                 "lines": [
                     f"ព័ត៌មានជិតដល់៖ **{ev['title']}** (ម៉ោងកម្ពុជា **{ev.get('time_kh', '--')}** | ក្រៅស្រុក **{ev.get('time_ny', '--')}**)",
                     f"Forecast: **{ev['forecast']}** | Previous: **{ev['previous']}**",
-                    g_line, w_line, f_line,
+                    g_line, w_line, m_line,
                     "អនុសាសន៍៖ **ផ្អាកការចូល Order ថ្មីជាបន្ទាន់** ព្រោះមាសអាចលោតខ្លាំង និងរីក Spread។"
                 ]
             }
         if news["upcoming"]:
             nxt = news["upcoming"][0]
             return {
-                "title": "ប្រតិទិន USD • FRED • មាសពិភពលោក & សង្គ្រាម", "badge": gnews.get("bias", "SAFE NOW"),
+                "title": "ប្រតិទិន USD • មាសពិភពលោក & សង្គ្រាម", "badge": gnews.get("bias", "SAFE NOW"),
                 "lines": [
                     "បច្ចុប្បន្ន **គ្មានព័ត៌មានក្រហម USD** ក្នុងរយៈពេល ៦០ នាទីខាងមុខទេ។",
                     f"ព័ត៌មានធំបន្ទាប់៖ **{nxt['title']}** (កម្ពុជា **{nxt.get('time_kh', '--')}** | ក្រៅស្រុក **{nxt.get('time_ny', '--')}**)",
-                    g_line, w_line, f_line
+                    g_line, w_line, m_line
                 ]
             }
-        return {"title": "ប្រតិទិន USD • FRED • មាសពិភពលោក & សង្គ្រាម", "badge": gnews.get("bias", "CLEAR"), "lines": ["គ្មានព័ត៌មាន USD កម្រិតក្រហមបន្ទាន់ទេ។", g_line, w_line, f_line]}
+        return {"title": "ប្រតិទិន USD • មាសពិភពលោក & សង្គ្រាម", "badge": gnews.get("bias", "CLEAR"), "lines": ["គ្មានព័ត៌មាន USD កម្រិតក្រហមបន្ទាន់ទេ។", g_line, w_line, m_line]}
 
     if preset == "inst_levels":
         return {
@@ -1538,16 +1567,16 @@ def generate_ai_reply(
         }
 
     if preset == "entry":
-        v_line = f"ខួរក្បាល AI V10.4៖ **{brain.get('action_km', 'WAIT')}**"
+        v_line = f"ខួរក្បាល AI V10.6៖ **{brain.get('action_km', 'WAIT')}**"
         if brain.get("reasons"):
             v_line += f" ({brain['reasons'][0]})"
         return {
             "title": f"វិភាគចំណុចចូលជាក់ស្តែង ({interval})", "badge": brain.get("status", f"{sig} • {conf}%"),
             "lines": [
                 v_line,
-                f"តម្លៃបច្ចុប្បន្ន៖ **${p}** | Order Flow ទិញ៖ **{brain.get('buy_pressure_pct', 50)}%** | តំបន់ចូល៖ **{s['entry_zone']}**",
+                f"តម្លៃបច្ចុប្បន្ន៖ **${p}** | Order Flow ទិញ៖ **{oflow.get('buy_pct', brain.get('buy_pressure_pct', 50))}%** | តំបន់ចូល៖ **{s['entry_zone']}**",
                 mtf["warning"] if mtf["warning"] else f"MTF Confluence៖ **{mtf['verdict']}**",
-                f"ការណែនាំ៖ {brain.get('hud_hint_km') or s['advice']}។"
+                f"ការពារ៖ {shield.get('title_km', '')} — {brain.get('hud_hint_km') or s['advice']}។"
             ]
         }
 
@@ -1563,7 +1592,7 @@ def generate_ai_reply(
             "lines": [
                 f"ទិសដៅ៖ **{brain.get('side') if brain.get('can_trade') else sig}** | Entry៖ **${pl['entry']}** (Risk ណែនាំ៖ **{risk_p}%** នៃដើមទុន)",
                 f"Stop Loss៖ **${pl['sl']}** (ចម្ងាយ ~${sl_d} ឬ {int(float(sl_d) * 10)} pips)",
-                f"Take Profit 1៖ **${tp1_v}** (កាត់ 60%) | Take Profit 2៖ **${tp2_v}**",
+                f"Take Profit 1៖ **${tp1_v}** (កាត់ 50%–60%) | Take Profit 2៖ **${tp2_v}**",
                 f"ការពារដើមទុន (Zero-Risk)៖ ពេលដល់ **${be_v}** (50% នៃ TP1) ត្រូវរំកិល SL មកស្មើដើមភ្លាម។"
             ]
         }
@@ -1614,9 +1643,9 @@ def generate_ai_reply(
     return {
         "title": f"សង្ខេបទីផ្សារមាសពេញលេញ ({interval})", "badge": brain.get("status", f"{sig} • {conf}%"),
         "lines": [
-            f"ខួរក្បាល AI V10.4៖ **{brain.get('action_km', 'WAIT')}** | Order Flow ទិញ៖ **{brain.get('buy_pressure_pct', 50)}%**",
-            f"តម្លៃផ្ទាល់៖ **${p}** | វគ្គ៖ **{sess['name']}** | FRED៖ **{fred.get('bias', 'NEUTRAL')}** | ព័ត៌មាន៖ **{gnews.get('bias', 'NEUTRAL')}**",
-            f"ហានិភ័យសង្គ្រាម៖ **{wnews.get('level', 'LOW')}** | MTF 4-TF៖ **{mtf['verdict']}**",
+            f"ខួរក្បាល AI V10.6៖ **{brain.get('action_km', 'WAIT')}** | Order Flow ទិញ៖ **{oflow.get('buy_pct', brain.get('buy_pressure_pct', 50))}%**",
+            f"តម្លៃផ្ទាល់៖ **${p}** | វគ្គ៖ **{sess['name']}** | ព័ត៌មានមាស៖ **{gnews.get('bias', 'NEUTRAL')}** | សង្គ្រាម៖ **{wnews.get('level', 'LOW')}**",
+            f"Exit Shield៖ **{shield.get('title_km', 'សកម្ម')}** | MTF 4-TF៖ **{mtf['verdict']}**",
             f"អនុសាសន៍៖ {brain.get('hud_hint_km') or s['advice']}"
         ]
     }
@@ -1627,9 +1656,8 @@ def generate_ai_reply(
 def health_check():
     return {
         "status": "ok",
-        "version": "10.4-institutional-quant",
+        "version": "10.6-final-hardened",
         "brain_loaded": brain_service.bundle is not None,
-        "fred_key": bool(os.getenv("FRED_API_KEY")),
         "finnhub_key": bool(FINNHUB_API_KEY),
         "ts": int(time.time())
     }
