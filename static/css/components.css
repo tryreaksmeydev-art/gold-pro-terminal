@@ -1,0 +1,100 @@
+.tf-btn.active,
+.lot-btn.active {
+  background: linear-gradient(135deg, #fde047, #ca8a04);
+  color: #070b13;
+  font-weight: 800;
+  box-shadow: 0 2px 10px rgba(234, 179, 8, 0.35);
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+.input-shake {
+  animation: shake 0.28s ease-in-out;
+}
+
+#chartStage {
+  touch-action: pan-y;
+}
+
+#chartHud,
+#neuralScannerBox {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+
+#chartHud.is-dragging,
+#neuralScannerBox.is-dragging {
+  cursor: grabbing;
+  opacity: 0.94;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.88);
+}
+
+.neural-line {
+  stroke-dasharray: 6 6;
+  animation: neuralFlow 1.1s linear infinite;
+}
+
+.neural-line-fast {
+  stroke-dasharray: 8 5;
+  animation: neuralFlow 0.65s linear infinite;
+}
+
+@keyframes neuralFlow {
+  from { stroke-dashoffset: 24; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes scanSweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(220%); }
+}
+
+.scan-beam {
+  animation: scanSweep 2.2s ease-in-out infinite;
+}
+
+#chartCard.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  width: 100vw;
+  height: 100dvh;
+  border-radius: 0;
+  border: none;
+  background: #070b13;
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+#chartCard.is-fullscreen #chartStage {
+  flex: 1;
+  height: 100%;
+  touch-action: none;
+}
+
+#chartCard.is-fullscreen #chart {
+  height: 100% !important;
+}
+
+#axisLivePill {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 16;
+  pointer-events: none;
+  min-width: 72px;
+  padding: 2px 6px;
+  border-radius: 4px 0 0 4px;
+  text-align: right;
+  line-height: 1.15;
+  will-change: transform;
+  transition: background-color 0.08s linear;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
