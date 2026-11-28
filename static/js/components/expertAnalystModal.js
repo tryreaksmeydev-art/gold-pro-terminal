@@ -92,7 +92,7 @@ class ExpertAnalystModal {
     const stage = $('chartStage') || document.body;
     const win = document.createElement('div');
     win.id = 'expertAnalystWindow';
-    win.className = 'hidden absolute top-3 right-3 z-[38] w-[min(390px,calc(100%-16px))] flex flex-col rounded-2xl bg-[#070d1a]/96 backdrop-blur-2xl border border-amber-400/45 shadow-[0_24px_70px_rgba(0,0,0,.85)] overflow-hidden';
+    win.className = 'hidden absolute top-3 right-3 z-[38] w-[min(400px,calc(100%-16px))] flex flex-col rounded-2xl bg-[#070d1a]/96 backdrop-blur-2xl border border-amber-400/45 shadow-[0_24px_70px_rgba(0,0,0,.85)] overflow-hidden';
     win.style.maxHeight = 'calc(100% - 16px)';
 
     win.innerHTML = `
@@ -102,7 +102,7 @@ class ExpertAnalystModal {
           <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse shrink-0"></span>
           <div class="min-w-0">
             <div class="text-xs sm:text-sm font-black text-amber-300 truncate">អ្នកជំនាញវិភាគកម្រិតខ្ពស់ (5m)</div>
-            <div class="text-[9px] text-gray-400 truncate">V12 Institutional Truth • 7-Point Proof & Replay</div>
+            <div class="text-[9px] text-gray-400 truncate">V12 Sniper A++ • 5m Macro/SMT • Paper Trade</div>
           </div>
         </div>
         <div class="flex items-center gap-1.5 shrink-0 tabular-nums">
@@ -141,7 +141,7 @@ class ExpertAnalystModal {
       <div id="eaBody" class="flex-1 min-h-0 overflow-y-auto px-3.5 sm:px-5 py-3 space-y-3.5 text-[11.5px] sm:text-xs" style="-webkit-overflow-scrolling:touch; overscroll-behavior:contain; touch-action:pan-y;">
         <div id="eaContentWrap" class="space-y-3.5">
 
-          <!-- Weekend Standby Panel (បង្ហាញជំនួសទិន្នន័យចាស់ពេលផ្សារបិទ) -->
+          <!-- Weekend Standby Panel -->
           <div id="eaWeekendStandby" class="hidden space-y-2.5 pb-3 border-b border-white/10">
             <div class="rounded-xl bg-amber-500/12 border border-amber-400/40 p-3 text-center space-y-1">
               <div class="text-sm font-black text-amber-300">⏸️ ទីផ្សារបិទចុងសប្តាហ៍ — រង់ចាំផ្សារបើកវិញ</div>
@@ -155,20 +155,47 @@ class ExpertAnalystModal {
             </div>
           </div>
 
-          <!-- Live Trading Sections (លាក់ស្វ័យប្រវត្តិពេលផ្សារបិទ បើកវិញភ្លាមពេលផ្សារបើក) -->
+          <!-- Live Trading Sections -->
           <div id="eaLiveSections" class="space-y-3.5">
-            <!-- A. Blunt Truth Verdict -->
-            <div class="space-y-1.5 pb-3 border-b border-white/10">
+
+            <!-- Daily Tilt Lock Banner -->
+            <div id="eaTiltBanner" class="hidden rounded-xl bg-rose-950/75 border border-rose-500/70 p-2.5 flex items-center justify-between gap-2">
+              <div id="eaTiltReason" class="text-[10.5px] font-black text-rose-200 leading-snug">🔒 សោរការពារគណនីប្រចាំថ្ងៃសកម្ម</div>
+              <button id="eaBtnResetTilt" type="button" class="shrink-0 px-2.5 py-1 rounded-lg bg-rose-500 hover:bg-rose-400 text-white text-[9.5px] font-black active:scale-95">🔓 ដោះសោរ</button>
+            </div>
+
+            <!-- A. Blunt Truth Verdict + Triple-Lock Sniper A++ -->
+            <div class="space-y-2 pb-3 border-b border-white/10">
               <div class="flex items-center justify-between gap-2 tabular-nums">
                 <span id="eaGradeBadge" class="text-[10.5px] font-black uppercase tracking-wide text-amber-300">5m AI • --%</span>
                 <span id="eaLivePnlBadge" class="text-[11px] font-black text-sky-300">READY</span>
               </div>
               <div id="eaVerdictTitle" class="text-sm sm:text-base font-black text-amber-300 leading-snug">⏳ កំពុងវិភាគទិន្នន័យស្ថាប័ន 5m...</div>
-              <div id="eaVerdictSub" class="text-[11px] text-gray-200 leading-relaxed">កំពុងផ្ទៀងផ្ទាត់ 7-Point Checklist, ម៉ោងមាស និងខួរក្បាលរៀនពីកំហុស</div>
-              <div class="w-full h-1.5 rounded-full bg-white/10 overflow-hidden mt-1">
+              <div id="eaVerdictSub" class="text-[11px] text-gray-200 leading-relaxed">កំពុងផ្ទៀងផ្ទាត់ Triple-Lock A++, 5m Macro & 7-Point Checklist</div>
+
+              <!-- Triple-Lock Consensus Bar -->
+              <div id="eaTripleLockBar" class="grid grid-cols-3 gap-1.5 text-[9.5px] font-black text-center">
+                <div id="eaLock1" class="rounded-lg py-1 px-1.5 border border-white/10 bg-white/[.04] text-gray-400">1. AI+6/7</div>
+                <div id="eaLock2" class="rounded-lg py-1 px-1.5 border border-white/10 bg-white/[.04] text-gray-400">2. Sweep/Trend</div>
+                <div id="eaLock3" class="rounded-lg py-1 px-1.5 border border-white/10 bg-white/[.04] text-gray-400">3. DXY/SMT</div>
+              </div>
+
+              <!-- Intraday 5m Macro Line -->
+              <div id="eaMacro5mLine" class="text-[10px] font-bold text-cyan-300 tabular-nums leading-snug">🌐 ម៉ាក្រូ 5m៖ --</div>
+
+              <div class="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
                 <div id="eaConfBar" class="h-full bg-gradient-to-r from-amber-400 to-emerald-400 transition-all duration-300" style="width:45%"></div>
               </div>
               <div id="eaPrepBanner" class="hidden pt-1 text-[11px] font-black text-amber-300 animate-pulse"></div>
+            </div>
+
+            <!-- 1-Click Paper Trade Execution Bar -->
+            <div class="flex items-center justify-between gap-2 pb-3 border-b border-white/10">
+              <div id="eaPaperStatus" class="text-[10.5px] font-bold text-gray-300 leading-snug">📝 ចូលសាក (Paper)៖ គ្មានជើងកំពុងរត់</div>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <button id="eaBtnPaperOpen" type="button" class="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-[#070b13] text-[10px] font-black active:scale-95 transition">📝 ចូលសាក</button>
+                <button id="eaBtnPaperClose" type="button" class="hidden px-2.5 py-1 rounded-lg bg-rose-500 hover:bg-rose-400 text-white text-[10px] font-black active:scale-95 transition">✖ បិទជើង</button>
+              </div>
             </div>
 
             <!-- B. 7-Point Transparency Checklist -->
@@ -233,7 +260,7 @@ class ExpertAnalystModal {
             </div>
           </div>
 
-          <!-- F. 5-Day Auto-Replay Backtest & Self-Learning Brain (ប្រើបានគ្រប់ពេល ទាំងថ្ងៃបិទផ្សារ) -->
+          <!-- F. 5-Day Auto-Replay Backtest & Self-Learning Brain -->
           <div class="space-y-2 text-[10.5px] leading-snug">
             <div class="flex items-center justify-between gap-2">
               <span class="font-black text-violet-300">🧬 ភស្តុតាងតេស្ត ៥ ថ្ងៃ & ខួរក្បាលរៀនពីកំហុស</span>
@@ -272,28 +299,38 @@ class ExpertAnalystModal {
     this._initSmartDrag(win, stage);
     makeResizable(win, $('eaResizeHandle'), stage, { minWidth: 300, maxWidth: 720 });
 
-    $('eaBtnClose')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.close();
-    });
-    $('eaBtnRefresh')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this._fetchReport();
-    });
-    $('eaBtnFullscreen')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.toggleFullscreen();
-    });
-    $('eaBtnReplay5d')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this._run5DayReplay();
-    });
+    $('eaBtnClose')?.addEventListener('click', (e) => { e.stopPropagation(); this.close(); });
+    $('eaBtnRefresh')?.addEventListener('click', (e) => { e.stopPropagation(); this._fetchReport(); });
+    $('eaBtnFullscreen')?.addEventListener('click', (e) => { e.stopPropagation(); this.toggleFullscreen(); });
+    $('eaBtnReplay5d')?.addEventListener('click', (e) => { e.stopPropagation(); this._run5DayReplay(); });
+    $('eaBtnPaperOpen')?.addEventListener('click', (e) => { e.stopPropagation(); this._handlePaperAction('open'); });
+    $('eaBtnPaperClose')?.addEventListener('click', (e) => { e.stopPropagation(); this._handlePaperAction('close'); });
+    $('eaBtnResetTilt')?.addEventListener('click', (e) => { e.stopPropagation(); this._handleTiltReset(); });
+
     $('eaCopyGrid')?.addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-ea-copy]');
       if (!btn) return;
       e.stopPropagation();
       this._copyField(btn.dataset.eaCopy, btn);
     });
+  }
+
+  async _handlePaperAction(action) {
+    try {
+      const res = await fetch(`/api/paper-trade/${action}`, { method: 'POST' });
+      const d = await res.json();
+      if (!d.ok && d.error && $('eaPaperStatus')) {
+        $('eaPaperStatus').textContent = `⚠️ ${d.error}`;
+      }
+      this._fetchReport();
+    } catch {}
+  }
+
+  async _handleTiltReset() {
+    try {
+      await fetch('/api/tilt-reset', { method: 'POST' });
+      this._fetchReport();
+    } catch {}
   }
 
   async _run5DayReplay() {
@@ -349,15 +386,8 @@ class ExpertAnalystModal {
   }
 
   _initSmartDrag(el, stage) {
-    let tracking = false;
-    let dragging = false;
-    let pointerId = null;
-    let fromBody = false;
-    let isTouch = false;
-    let startX = 0;
-    let startY = 0;
-    let startLeft = 0;
-    let startTop = 0;
+    let tracking = false, dragging = false, pointerId = null, fromBody = false, isTouch = false;
+    let startX = 0, startY = 0, startLeft = 0, startTop = 0;
 
     const beginDrag = (e) => {
       if (this.isFullscreen) return;
@@ -384,14 +414,9 @@ class ExpertAnalystModal {
         if (e.clientX >= sbRect.right - 12) return;
       }
 
-      tracking = true;
-      dragging = false;
-      pointerId = e.pointerId;
-      fromBody = inBody;
-      isTouch = e.pointerType === 'touch' || e.pointerType === 'pen';
-      startX = e.clientX;
-      startY = e.clientY;
-
+      tracking = true; dragging = false; pointerId = e.pointerId;
+      fromBody = inBody; isTouch = e.pointerType === 'touch' || e.pointerType === 'pen';
+      startX = e.clientX; startY = e.clientY;
       if (!fromBody) beginDrag(e);
     });
 
@@ -402,10 +427,7 @@ class ExpertAnalystModal {
 
       if (!dragging) {
         if (Math.hypot(dx, dy) < 6) return;
-        if (fromBody && isTouch && Math.abs(dy) >= Math.abs(dx) * 1.1) {
-          tracking = false;
-          return;
-        }
+        if (fromBody && isTouch && Math.abs(dy) >= Math.abs(dx) * 1.1) { tracking = false; return; }
         beginDrag(e);
       }
 
@@ -419,12 +441,8 @@ class ExpertAnalystModal {
 
     const endDrag = (e) => {
       if (e.pointerId !== pointerId) return;
-      if (dragging) {
-        try { el.releasePointerCapture(e.pointerId); } catch {}
-      }
-      tracking = false;
-      dragging = false;
-      pointerId = null;
+      if (dragging) { try { el.releasePointerCapture(e.pointerId); } catch {} }
+      tracking = false; dragging = false; pointerId = null;
     };
 
     el.addEventListener('pointerup', endDrag);
@@ -440,7 +458,6 @@ class ExpertAnalystModal {
     if (!elRect.width || !stageRect.width) return;
 
     this.winEl.style.maxHeight = `${Math.max(220, stage.clientHeight - 16)}px`;
-
     const curL = elRect.left - stageRect.left;
     const curT = elRect.top - stageRect.top;
     const maxL = Math.max(4, stage.clientWidth - this.winEl.offsetWidth - 4);
@@ -468,26 +485,21 @@ class ExpertAnalystModal {
 
     if (this.isFullscreen) {
       this.savedRect = {
-        left: this.winEl.style.left,
-        top: this.winEl.style.top,
-        right: this.winEl.style.right,
-        width: this.winEl.style.width,
+        left: this.winEl.style.left, top: this.winEl.style.top,
+        right: this.winEl.style.right, width: this.winEl.style.width,
         maxHeight: this.winEl.style.maxHeight,
       };
       document.body.appendChild(this.winEl);
       this.winEl.className = 'fixed inset-0 z-[160] w-screen h-[100dvh] flex flex-col bg-[#060b16] border-0 rounded-none overflow-hidden';
-      this.winEl.style.left = '';
-      this.winEl.style.top = '';
-      this.winEl.style.right = '';
-      this.winEl.style.width = '';
-      this.winEl.style.maxHeight = '100dvh';
+      this.winEl.style.left = ''; this.winEl.style.top = ''; this.winEl.style.right = '';
+      this.winEl.style.width = ''; this.winEl.style.maxHeight = '100dvh';
       if (wrap) wrap.className = 'max-w-3xl mx-auto space-y-4';
       resizeEl?.classList.add('hidden');
       if (fsIcon) fsIcon.textContent = '❐';
       if (fsTxt) fsTxt.textContent = 'បង្រួម';
     } else {
       stage.appendChild(this.winEl);
-      this.winEl.className = 'absolute top-3 right-3 z-[38] w-[min(390px,calc(100%-16px))] flex flex-col rounded-2xl bg-[#070d1a]/96 backdrop-blur-2xl border border-amber-400/45 shadow-[0_24px_70px_rgba(0,0,0,.85)] overflow-hidden';
+      this.winEl.className = 'absolute top-3 right-3 z-[38] w-[min(400px,calc(100%-16px))] flex flex-col rounded-2xl bg-[#070d1a]/96 backdrop-blur-2xl border border-amber-400/45 shadow-[0_24px_70px_rgba(0,0,0,.85)] overflow-hidden';
       if (this.savedRect) {
         this.winEl.style.left = this.savedRect.left || '';
         this.winEl.style.top = this.savedRect.top || '';
@@ -557,9 +569,7 @@ class ExpertAnalystModal {
     const min = Math.min(...pts);
     const max = Math.max(...pts);
     const span = Math.max(max - min, 0.05);
-    const w = 110;
-    const h = 28;
-    const pad = 2;
+    const w = 110, h = 28, pad = 2;
 
     const coords = pts.map((v, i) => [
       (i / (pts.length - 1)) * w,
@@ -617,14 +627,8 @@ class ExpertAnalystModal {
     if (this.isFullscreen) this.toggleFullscreen(false);
     this.isOpen = false;
     this.winEl?.classList.add('hidden');
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
-    }
-    if (this.countdownTimer) {
-      clearInterval(this.countdownTimer);
-      this.countdownTimer = null;
-    }
+    if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+    if (this.countdownTimer) { clearInterval(this.countdownTimer); this.countdownTimer = null; }
   }
 
   _startCountdown() {
@@ -702,7 +706,6 @@ class ExpertAnalystModal {
     const pm = r.pattern_memory || {};
     const lb = r.learning_brain || {};
 
-    // Toggle Weekend Standby vs Live Trading Sections
     $('eaWeekendStandby')?.classList.toggle('hidden', !wknd);
     $('eaLiveSections')?.classList.toggle('hidden', wknd);
 
@@ -713,7 +716,22 @@ class ExpertAnalystModal {
       const reg = r.regime || {};
       const rg = r.risk_guide || {};
       const cl = r.checklist || {};
+      const tl = r.triple_lock || {};
+      const m5 = r.macro_5m || {};
+      const tilt = r.tilt_lock || {};
 
+      // Daily Tilt Lock Banner
+      const tiltEl = $('eaTiltBanner');
+      if (tiltEl) {
+        if (tilt.locked) {
+          tiltEl.classList.remove('hidden');
+          if ($('eaTiltReason')) $('eaTiltReason').textContent = `🔒 ${tilt.reason_km} (នៅសល់ ${tilt.rem_mins} នាទី)`;
+        } else {
+          tiltEl.classList.add('hidden');
+        }
+      }
+
+      // Verdict + Triple-Lock Sniper A++
       const title = $('eaVerdictTitle');
       const badge = $('eaGradeBadge');
       const bar = $('eaConfBar');
@@ -721,6 +739,9 @@ class ExpertAnalystModal {
         if (r.verdict_code === 'BLOCKED') {
           title.className = 'text-sm sm:text-base font-black text-rose-400 leading-snug';
           badge.className = 'text-[10.5px] font-black uppercase tracking-wide text-rose-400';
+        } else if (tl.is_sniper_app) {
+          title.className = 'text-sm sm:text-base font-black text-cyan-300 leading-snug';
+          badge.className = 'text-[10.5px] font-black uppercase tracking-wide text-cyan-300';
         } else if (r.can_execute && r.bias === 'BUY') {
           title.className = 'text-sm sm:text-base font-black text-emerald-400 leading-snug';
           badge.className = 'text-[10.5px] font-black uppercase tracking-wide text-emerald-400';
@@ -731,12 +752,51 @@ class ExpertAnalystModal {
           title.className = 'text-sm sm:text-base font-black text-amber-300 leading-snug';
           badge.className = 'text-[10.5px] font-black uppercase tracking-wide text-amber-300';
         }
-        badge.textContent = `${r.grade || '5m'} • ទំនុកចិត្ត ${r.confidence ?? 0}%`;
+        badge.textContent = `${r.grade || '5m'} • ទំនុកចិត្ត ${r.confidence ?? 0}% • ${tl.label_km || ''}`;
         title.textContent = r.verdict_km || '--';
       }
       if (bar) bar.style.width = `${Math.max(10, Math.min(100, Number(r.confidence || 0)))}%`;
       if ($('eaVerdictSub')) $('eaVerdictSub').textContent = r.sub_km || '--';
 
+      // 3-Lock Indicators
+      const setLock = (id, ok, txt) => {
+        const el = $(id);
+        if (!el) return;
+        el.textContent = `${ok ? '✓' : '✕'} ${txt}`;
+        el.className = ok
+          ? 'rounded-lg py-1 px-1.5 border border-emerald-400/50 bg-emerald-500/18 text-emerald-200'
+          : 'rounded-lg py-1 px-1.5 border border-white/10 bg-white/[.04] text-gray-400';
+      };
+      setLock('eaLock1', tl.lock1_ai, 'AI + 6/7');
+      setLock('eaLock2', tl.lock2_structure, 'Sweep/Trend');
+      setLock('eaLock3', tl.lock3_macro, 'DXY/SMT 5m');
+
+      if ($('eaMacro5mLine')) {
+        $('eaMacro5mLine').textContent = `🌐 ម៉ាក្រូ 5m៖ ${m5.summary_km || '--'}`;
+      }
+
+      // 1-Click Paper Trade Bar
+      const actTrade = lb.active_trade;
+      const pSt = $('eaPaperStatus');
+      const btnOpen = $('eaBtnPaperOpen');
+      const btnClose = $('eaBtnPaperClose');
+      if (actTrade) {
+        if (pSt) {
+          pSt.textContent = `🟢 ជើងសាក ${actTrade.side} @ $${Number(actTrade.entry).toFixed(2)} • SL $${Number(actTrade.sl).toFixed(2)} ${actTrade.be_locked ? '(BE ✓)' : ''}`;
+          pSt.className = 'text-[10.5px] font-black text-emerald-300 leading-snug tabular-nums';
+        }
+        btnOpen?.classList.add('hidden');
+        btnClose?.classList.remove('hidden');
+      } else {
+        if (pSt) {
+          pSt.textContent = `📝 ចូលសាក (Paper)៖ រួចរាល់ • ថ្ងៃនេះ ${tilt.daily_net_pips >= 0 ? '+' : ''}${tilt.daily_net_pips || 0}p`;
+          pSt.className = 'text-[10.5px] font-bold text-gray-300 leading-snug tabular-nums';
+        }
+        btnOpen?.classList.remove('hidden');
+        btnClose?.classList.add('hidden');
+      }
+
+      // 7-Point Checklist
       const scEl = $('eaCheckScore');
       if (scEl) {
         scEl.textContent = cl.verdict_km || `${cl.passed ?? 0}/7`;
@@ -790,7 +850,7 @@ class ExpertAnalystModal {
       if ($('eaRowLossStop')) $('eaRowLossStop').textContent = `• ${g.loss_stop_km || '--'}`;
     }
 
-    // F. Self-Learning Summary & 5-Day Backtest (បង្ហាញជានិច្ច ទាំងថ្ងៃបិទផ្សារ)
+    // F. Self-Learning Summary & 5-Day Backtest
     if ($('eaBrainIq')) $('eaBrainIq').textContent = `AI IQ ${lb.iq_level ?? 60}`;
     if ($('eaBackendSummary')) {
       $('eaBackendSummary').textContent = wknd
@@ -888,6 +948,16 @@ class ExpertAnalystModal {
     const pnlEl = $('eaLivePnlBadge');
     const r = this.lastReport;
     if (!pnlEl || !r?.plan) return;
+
+    const act = r.learning_brain?.active_trade;
+    if (act && act.entry) {
+      const fav = act.side === 'BUY' ? (price - Number(act.entry)) : (Number(act.entry) - price);
+      const costPips = (Math.max(0, directFeed.getSpread()) * 10.0) + COMM_PIPS;
+      const netUsd = ((fav * 10.0) - costPips) * (this.auditLot * 10.0);
+      pnlEl.textContent = `Paper ${netUsd >= 0 ? '+' : ''}$${netUsd.toFixed(2)}`;
+      pnlEl.className = `text-[11px] font-black ${netUsd > 0 ? 'text-emerald-400' : netUsd < 0 ? 'text-rose-400' : 'text-gray-200'}`;
+      return;
+    }
 
     if (!r.can_execute) {
       const ent = toNum(r.plan.entry);

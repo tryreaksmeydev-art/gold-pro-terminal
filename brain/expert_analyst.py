@@ -5,11 +5,14 @@ from datetime import datetime, timezone
 
 import numpy as np
 
-from .utils import TZ_KH, safe_float, is_forex_weekend_closed
+from .utils import TZ_KH, safe_float, is_forex_weekend_closed as is_forex_weekend_utc
+from .intraday_macro_smt import intraday_macro_smt
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXPERT_MEMORY_PATH = os.path.join(BASE_DIR, "models", "expert_memory.json")
 COMM_PIPS = 1.6
+DAILY_MAX_LOSS_STREAK = 2
+DAILY_MAX_LOSS_PIPS = -150.0  # -$15 លើ Lot 0.01 -> ចាក់សោរការពារគណនី
 
 
 # ==================== CAMBODIA KILLZONE CLOCK (UTC+7 INSTITUTIONAL TIMING) ====================
@@ -18,7 +21,7 @@ def evaluate_cambodia_killzone(now_utc: datetime) -> dict:
     time_str = now_kh.strftime("%H:%M")
     hm = now_kh.hour + (now_kh.minute / 60.0)
 
-    if is_forex_weekend_closed(now_utc):
+    if is_forex_weekend_utc(now_utc):
         return {
             "code": "WEEKEND_CLOSED",
             "name_km": "ទីផ្សារបិទចុងសប្តាហ៍",
@@ -67,7 +70,7 @@ def evaluate_cambodia_killzone(now_utc: datetime) -> dict:
             "is_dead": False,
             "bonus": 0,
             "next_golden_km": "ម៉ោងមាសបន្ទាប់៖ 14:00 រសៀល (London Open)",
-            "truth_km": "លំហូរលុយចាប់ផ្តើមថយ ប្រយ័ត្នការកាត់ចំណេញបត់ក្បាល — យកតែជើង Grade A/A+។",
+            "truth_km": "លំហូរលុយចាប់ផ្តើមថយ ប្រយ័ត្នការកាត់ចំណេញបត់ក្បាល — យកតែជើង Grade A/A++។",
         }
 
     if 17.5 <= hm < 19.33:
@@ -122,7 +125,7 @@ def evaluate_cambodia_killzone(now_utc: datetime) -> dict:
     }
 
 
-# ==================== SELF-LEARNING MEMORY (PATTERN + FACTOR-LEVEL) ====================
+# ==================== SELF-LEARNING MEMORY + PAPER TRADE + DAILY TILT LOCK ====================
 class ExpertSelfLearningMemory:
     def __init__(self, path: str = EXPERT_MEMORY_PATH):
         self.path = path
@@ -137,6 +140,12 @@ class ExpertSelfLearningMemory:
             "active_trade": None,
             "learned_log": [],
             "last_replay_day": "",
+            # Daily Drawdown & Tilt Lock
+            "daily_date": "",
+            "daily_loss_streak": 0,
+            "daily_net_pips": 0.0,
+            "tilt_locked_until_ts": 0,
+            "tilt_reason_km": "",
         }
         self._load()
 
@@ -161,6 +170,158 @@ class ExpertSelfLearningMemory:
             os.replace(tmp, self.path)
         except Exception as e:
             print(f"[EXPERT_MEM] save error: {e}")
+
+    def _ensure_today(self):
+        today = datetime.now(TZ_KH).strftime("%Y-%m-%d")
+        if self.state.get("daily_date") != today:
+            self.state["daily_date"] = today
+            self.state["daily_loss_streak"] = 0
+            self.state["daily_net_pips"] = 0.0
+            self.state["tilt_locked_until_ts"] = 0
+            self.state["tilt_reason_km"] = ""
+
+    def get_tilt_status(self) -> dict:
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        with self._lock:
+            self._ensure_today()
+            until_ts = int(self.state.get("tilt_locked_until_ts", 0))
+            active = until_ts > now_ts
+            rem_mins = max(0, int((until_ts - now_ts) / 60)) if active else 0
+            return {
+                "locked": active,
+                "rem_mins": rem_mins,
+                "daily_loss_streak": int(self.state.get("daily_loss_streak", 0)),
+                "daily_net_pips": round(float(self.state.get("daily_net_pips", 0.0)), 1),
+                "reason_km": self.state.get("tilt_reason_km", "") if active else "",
+            }
+
+    def reset_tilt_lock(self) -> dict:
+        with self._lock:
+            self._ensure_today()
+            self.state["tilt_locked_until_ts"] = 0
+            self.state["tilt_reason_km"] = ""
+            self.state["daily_loss_streak"] = 0
+            self._save()
+        return {"ok": True, "message_km": "បានដោះសោរ Daily Tilt Lock រួចរាល់!"}
+
+    def open_manual_paper_trade(self, report: dict) -> dict:
+        now_utc = datetime.now(timezone.utc)
+        if is_forex_weekend_utc(now_utc):
+            return {"ok": False, "error": "ផ្សារបិទចុងសប្តាហ៍ — មិនអាចបើកជើងសាកបានទេ"}
+
+        plan = (report or {}).get("plan") or {}
+        side = str((report or {}).get("bias") or "BUY").upper()
+        entry = safe_float(report.get("price") or plan.get("entry"), 0.0)
+        sl = safe_float(plan.get("sl"), 0.0)
+        tp1 = safe_float(plan.get("tp1"), 0.0)
+        be_trigger = safe_float(plan.get("be_trigger"), entry)
+        if entry <= 1000 or sl <= 1000 or tp1 <= 1000:
+            return {"ok": False, "error": "មិនទាន់មានតួលេខ Entry / SL / TP គ្រប់គ្រាន់"}
+
+        now_ts = int(now_utc.timestamp())
+        now_kh = now_utc.astimezone(TZ_KH).strftime("%d/%m %H:%M")
+        sig = str(((report or {}).get("pattern_memory") or {}).get("signature") or f"MANUAL|{side}")
+
+        with self._lock:
+            if self.state.get("active_trade"):
+                return {"ok": False, "error": "មានជើងសាកកំពុងរត់ស្រាប់ហើយ — សូមបិទជើងចាស់សិន"}
+            self.state["active_trade"] = {
+                "side": side,
+                "signature": sig,
+                "factors": ["MANUAL_PAPER"],
+                "entry": round(entry, 2),
+                "sl": round(sl, 2),
+                "tp1": round(tp1, 2),
+                "be_trigger": round(be_trigger, 2),
+                "filled": True,
+                "be_locked": False,
+                "manual": True,
+                "created_ts": now_ts,
+                "filled_ts": now_ts,
+                "open_kh": now_kh,
+            }
+            self._save()
+            return {"ok": True, "trade": dict(self.state["active_trade"])}
+
+    def close_manual_paper_trade(self, exit_price: float, spread: float = 0.25) -> dict:
+        now_utc = datetime.now(timezone.utc)
+        now_ts = int(now_utc.timestamp())
+        now_kh = now_utc.astimezone(TZ_KH).strftime("%d/%m %H:%M")
+        cost_pips = round((max(0.0, safe_float(spread, 0.25)) * 10.0) + COMM_PIPS, 1)
+
+        with self._lock:
+            self._ensure_today()
+            act = self.state.get("active_trade")
+            if not act:
+                return {"ok": False, "error": "គ្មានជើងសាកកំពុងរត់ទេ"}
+
+            side = act["side"]
+            entry = float(act["entry"])
+            px = exit_price if exit_price > 1000 else entry
+            diff = (px - entry) if side == "BUY" else (entry - px)
+            pips = round((diff * 10.0) - cost_pips, 1)
+            is_win = pips > 0
+
+            self._record_outcome_locked(act, px, pips, is_win, now_ts, now_kh, manual_close=True)
+            self.state["active_trade"] = None
+            self._save()
+            return {"ok": True, "pips": pips, "is_win": is_win, "exit": round(px, 2)}
+
+    def _record_outcome_locked(self, act: dict, exit_px: float, pips: float, is_win: bool, now_ts: int, now_kh: str, manual_close: bool = False):
+        self._ensure_today()
+        side = act["side"]
+        entry = float(act["entry"])
+        sig = act["signature"]
+
+        pat = self.state["patterns"].setdefault(
+            sig, {"wins": 0, "losses": 0, "streak_loss": 0, "streak_win": 0, "last_ts": now_ts}
+        )
+        for fk in (act.get("factors") or []):
+            fs = self.state["factor_stats"].setdefault(fk, {"wins": 0, "losses": 0})
+            if is_win:
+                fs["wins"] = int(fs["wins"]) + 1
+            else:
+                fs["losses"] = int(fs["losses"]) + 1
+
+        self.state["daily_net_pips"] = round(float(self.state.get("daily_net_pips", 0.0)) + pips, 1)
+
+        if is_win:
+            self.state["total_wins"] = int(self.state["total_wins"]) + 1
+            pat["wins"] = int(pat["wins"]) + 1
+            pat["streak_win"] = int(pat.get("streak_win", 0)) + 1
+            pat["streak_loss"] = 0
+            self.state["daily_loss_streak"] = 0
+            tag = "បិទដៃ" if manual_close else "TP/BE"
+            lesson_km = f"ឈ្នះ ({side} {tag} +{pips:.0f}p) — បង្កើនពិន្ទុទំនុកចិត្ត"
+        else:
+            self.state["total_losses"] = int(self.state["total_losses"]) + 1
+            pat["losses"] = int(pat["losses"]) + 1
+            pat["streak_loss"] = int(pat.get("streak_loss", 0)) + 1
+            pat["streak_win"] = 0
+            self.state["daily_loss_streak"] = int(self.state.get("daily_loss_streak", 0)) + 1
+            lesson_km = f"ខាត ({side} {pips:.0f}p) — ចងចាំកំហុស & កាត់បន្ថយទម្រង់នេះ"
+
+            # ពិនិត្យ Daily Drawdown & Tilt Lock
+            if self.state["daily_loss_streak"] >= DAILY_MAX_LOSS_STREAK:
+                self.state["tilt_locked_until_ts"] = now_ts + 14400  # ចាក់សោរ 4 ម៉ោង (ដល់វគ្គបន្ទាប់)
+                self.state["tilt_reason_km"] = f"សោរការពារគណនី៖ ខាត {self.state['daily_loss_streak']} ជើងជាប់គ្នាថ្ងៃនេះ — សម្រាកដល់វគ្គបន្ទាប់!"
+            elif self.state["daily_net_pips"] <= DAILY_MAX_LOSS_PIPS:
+                self.state["tilt_locked_until_ts"] = now_ts + 21600  # ចាក់សោរ 6 ម៉ោង
+                self.state["tilt_reason_km"] = f"សោរការពារគណនី៖ ខាតប្រចាំថ្ងៃ {self.state['daily_net_pips']}p ដល់ដែនកំណត់ — ឈប់ជួញដូរថ្ងៃនេះ!"
+
+        pat["last_ts"] = now_ts
+        self.state["net_pips"] = round(float(self.state.get("net_pips", 0.0)) + pips, 1)
+        self.state["learned_log"].insert(0, {
+            "time_kh": now_kh,
+            "side": side,
+            "result": "WIN" if is_win else "LOSS",
+            "pips": pips,
+            "entry": round(entry, 2),
+            "exit": round(exit_px, 2),
+            "signature": sig,
+            "lesson_km": lesson_km,
+        })
+        self.state["learned_log"] = self.state["learned_log"][:15]
 
     def inspect_pattern(self, sig: str, active_factors: list[str]) -> dict:
         with self._lock:
@@ -222,7 +383,6 @@ class ExpertSelfLearningMemory:
             self._save()
 
     def seed_from_replay(self, replay_trades: list[dict], traps_avoided: int) -> bool:
-        """បញ្ចូលមេរៀនពី Backtest 5 ថ្ងៃចូលខួរក្បាល (ការពារកុំឱ្យបូកជាន់គ្នាក្នុងថ្ងៃតែមួយ)"""
         today_str = datetime.now(TZ_KH).strftime("%Y-%m-%d")
         now_ts = int(datetime.now(timezone.utc).timestamp())
 
@@ -234,7 +394,6 @@ class ExpertSelfLearningMemory:
                 sig = tr["signature"]
                 is_win = bool(tr["is_win"])
                 pips = float(tr["pips"])
-                side = tr["side"]
 
                 pat = self.state["patterns"].setdefault(
                     sig, {"wins": 0, "losses": 0, "streak_loss": 0, "streak_win": 0, "last_ts": now_ts}
@@ -294,8 +453,9 @@ class ExpertSelfLearningMemory:
         changed = False
 
         with self._lock:
+            self._ensure_today()
             act = self.state.get("active_trade")
-            if act and price > 0 and not is_forex_weekend_closed(now_utc):
+            if act and price > 0 and not is_forex_weekend_utc(now_utc):
                 hi = max(price, high) if high > 0 else price
                 lo = min(price, low) if low > 0 else price
 
@@ -341,52 +501,14 @@ class ExpertSelfLearningMemory:
                     if outcome:
                         diff = (exit_px - entry) if side == "BUY" else (entry - exit_px)
                         pips = round((diff * 10.0) - cost_pips, 1)
-                        is_win = pips > 0
-
-                        sig = act["signature"]
-                        pat = self.state["patterns"].setdefault(
-                            sig, {"wins": 0, "losses": 0, "streak_loss": 0, "streak_win": 0, "last_ts": now_ts}
-                        )
-                        for fk in (act.get("factors") or []):
-                            fs = self.state["factor_stats"].setdefault(fk, {"wins": 0, "losses": 0})
-                            if is_win:
-                                fs["wins"] = int(fs["wins"]) + 1
-                            else:
-                                fs["losses"] = int(fs["losses"]) + 1
-
-                        if is_win:
-                            self.state["total_wins"] = int(self.state["total_wins"]) + 1
-                            pat["wins"] = int(pat["wins"]) + 1
-                            pat["streak_win"] = int(pat.get("streak_win", 0)) + 1
-                            pat["streak_loss"] = 0
-                            lesson_km = f"រៀនទម្រង់ឈ្នះ ({side} +{pips:.0f}p) — បង្កើនពិន្ទុទំនុកចិត្ត"
-                        else:
-                            self.state["total_losses"] = int(self.state["total_losses"]) + 1
-                            pat["losses"] = int(pat["losses"]) + 1
-                            pat["streak_loss"] = int(pat.get("streak_loss", 0)) + 1
-                            pat["streak_win"] = 0
-                            lesson_km = f"ចងចាំកំហុស ({side} {pips:.0f}p) — កាត់បន្ថយ/ប្លុកទម្រង់នេះ"
-
-                        pat["last_ts"] = now_ts
-                        self.state["net_pips"] = round(float(self.state.get("net_pips", 0.0)) + pips, 1)
-                        self.state["learned_log"].insert(0, {
-                            "time_kh": now_kh,
-                            "side": side,
-                            "result": "WIN" if is_win else "LOSS",
-                            "pips": pips,
-                            "entry": round(entry, 2),
-                            "exit": round(exit_px, 2),
-                            "signature": sig,
-                            "lesson_km": lesson_km,
-                        })
-                        self.state["learned_log"] = self.state["learned_log"][:15]
+                        self._record_outcome_locked(act, exit_px, pips, pips > 0, now_ts, now_kh, manual_close=False)
                         self.state["active_trade"] = None
                         changed = True
                     elif (now_ts - int(act.get("filled_ts", now_ts))) > 14400:
                         self.state["active_trade"] = None
                         changed = True
 
-            if new_trade and self.state.get("active_trade") is None and not is_forex_weekend_closed(now_utc):
+            if new_trade and self.state.get("active_trade") is None and not is_forex_weekend_utc(now_utc):
                 self.state["active_trade"] = {
                     "side": new_trade["side"],
                     "signature": new_trade["signature"],
@@ -397,6 +519,7 @@ class ExpertSelfLearningMemory:
                     "be_trigger": new_trade["be_trigger"],
                     "filled": bool(new_trade.get("is_market", True)),
                     "be_locked": False,
+                    "manual": False,
                     "created_ts": now_ts,
                     "filled_ts": now_ts,
                     "open_kh": now_kh,
@@ -425,7 +548,7 @@ class ExpertSelfLearningMemory:
             }
 
 
-# ==================== MAIN INSTITUTIONAL ANALYST + 7-POINT CHECKLIST + 5D REPLAY ====================
+# ==================== MAIN INSTITUTIONAL ANALYST + TRIPLE-LOCK A++ + 5D REPLAY ====================
 class AdvancedExpertAnalyst:
     def __init__(self):
         self.memory = ExpertSelfLearningMemory()
@@ -522,13 +645,12 @@ class AdvancedExpertAnalyst:
         cvd_pct: int,
         cvd_div: str,
         mtf_al: str,
-        brain: dict,
+        macro5m: dict,
         kz: dict,
         rr_val: float,
         news: dict,
         traps: list[str],
     ) -> dict:
-        """បញ្ជីផ្ទៀងផ្ទាត់តម្លាភាព 7 កត្តាស្នូល (7-Point Pass Checklist)"""
         trend_ok = (bias == "BUY" and price > ema20 and ema20 >= ema50) or (bias == "SELL" and price < ema20 and ema20 <= ema50)
         zone_ok = (
             (bias == "BUY" and (dr["zone"] in ("DISCOUNT", "EQUILIBRIUM") or dr["regime"] == "TRENDING"))
@@ -536,9 +658,14 @@ class AdvancedExpertAnalyst:
         )
         flow_ok = (bias == "BUY" and (cvd_pct >= 53 or cvd_div == "BULL_DIV")) or (bias == "SELL" and (cvd_pct <= 47 or cvd_div == "BEAR_DIV"))
 
-        macro = brain.get("macro") or {}
-        us10y = safe_float(macro.get("us10y"), 4.2)
-        macro_ok = (bias == "BUY" and us10y < 4.85) or (bias == "SELL" and us10y >= 4.0) or (mtf_al == bias)
+        m_bias = str(macro5m.get("macro_gold_bias") or "NEUTRAL")
+        smt_s = str(macro5m.get("smt_signal") or "NONE")
+        macro_against = (bias == "BUY" and (m_bias == "BEARISH_GOLD" or smt_s == "BEAR_SMT")) or (bias == "SELL" and (m_bias == "BULLISH_GOLD" or smt_s == "BULL_SMT"))
+        macro_ok = (not macro_against) and (
+            (bias == "BUY" and (m_bias == "BULLISH_GOLD" or smt_s == "BULL_SMT" or mtf_al == "BUY"))
+            or (bias == "SELL" and (m_bias == "BEARISH_GOLD" or smt_s == "BEAR_SMT" or mtf_al == "SELL"))
+        )
+
         kz_ok = bool(kz.get("is_golden"))
         rr_ok = rr_val >= 1.40
         safety_ok = (not news.get("danger")) and (len(traps) == 0)
@@ -547,7 +674,7 @@ class AdvancedExpertAnalyst:
             {"id": "trend", "label": "និន្នាការ 5m (EMA20/50)", "ok": trend_ok, "val": f"{bias} Trend" if trend_ok else "ខ្សោយ/បញ្ច្រាស"},
             {"id": "zone", "label": "តំបន់តម្លៃ (Discount/Premium)", "ok": zone_ok, "val": f"{dr['zone']} {dr['pct']}%"},
             {"id": "flow", "label": "លំហូរលុយធំ (CVD)", "ok": flow_ok, "val": f"CVD {cvd_pct}%"},
-            {"id": "macro", "label": "ម៉ាក្រូ & MTF ស្របទិស", "ok": macro_ok, "val": f"MTF {mtf_al}"},
+            {"id": "macro", "label": "ម៉ាក្រូ 5m (DXY/US10Y/SMT)", "ok": macro_ok, "val": "ស្របទិស ✓" if macro_ok else ("បញ្ច្រាស!" if macro_against else f"MTF {mtf_al}")},
             {"id": "kz", "label": "ម៉ោងមាសកម្ពុជា (London/NY)", "ok": kz_ok, "val": f"{kz.get('prob_pct', 0)}% ({kz.get('time_kh', '--')})"},
             {"id": "rr", "label": "សមាមាត្រចំណេញ/ខាត (R:R ≥ 1.4)", "ok": rr_ok, "val": f"{rr_val} : 1"},
             {"id": "safe", "label": "គ្មានព័ត៌មានក្រហម & អន្ទាក់", "ok": safety_ok, "val": "ស្អាត ✓" if safety_ok else f"ជាប់ {len(traps)} អន្ទាក់"},
@@ -568,6 +695,7 @@ class AdvancedExpertAnalyst:
         now_ts = int(now_utc.timestamp())
         candle_rem_sec = 300 - (now_ts % 300)
         kz = evaluate_cambodia_killzone(now_utc)
+        tilt = self.memory.get_tilt_status()
 
         price = safe_float(payload_5m.get("price"), 0.0)
         spread = safe_float(payload_5m.get("spread"), 0.25)
@@ -579,16 +707,19 @@ class AdvancedExpertAnalyst:
         smc = payload_5m.get("smc") or {}
         quant = payload_5m.get("quant") or {}
         mtf = payload_5m.get("mtf") or {}
-        smt = payload_5m.get("smt") or {}
+        smt_old = payload_5m.get("smt") or {}
         news = payload_5m.get("news") or {}
         brain = payload_5m.get("brain") or {}
+
+        # Intraday 5m Macro + Fixed Silver SMT
+        macro5m = intraday_macro_smt.get_snapshot(candles)
+        smt_sig = macro5m["smt_signal"] if macro5m["smt_signal"] != "NONE" else str(smt_old.get("signal") or "NONE")
 
         dr = self._compute_dealing_range_and_regime(candles, price, ema20, ema50, atr)
         vwap = safe_float(quant.get("vwap"), price)
         poc = safe_float(quant.get("poc"), price)
         cvd_pct = int(safe_float(quant.get("cvd_pct"), 50))
         cvd_div = str(quant.get("cvd_divergence") or "NONE")
-        smt_sig = str(smt.get("signal") or "NONE")
         mtf_al = str(mtf.get("aligned") or "MIXED")
 
         bull_ob = self._find_nearest_ob(smc.get("demand_blocks"), price, want_below=True)
@@ -654,14 +785,24 @@ class AdvancedExpertAnalyst:
             f_sell.append("CVD_BEAR")
             reasons_sell.append(f"លំហូរលុយធំលក់ឈ្នះ (CVD {cvd_pct}%)")
 
+        # Intraday 5m Macro DXY/US10Y + Silver SMT Scoring
+        if macro5m["macro_gold_bias"] == "BULLISH_GOLD":
+            buy_score += 10
+            f_buy.append("MACRO_5M_BULL")
+            reasons_buy.append(f"ម៉ាក្រូ 5m គាំទ្រមាសឡើង ({macro5m['summary_km']})")
+        elif macro5m["macro_gold_bias"] == "BEARISH_GOLD":
+            sell_score += 10
+            f_sell.append("MACRO_5M_BEAR")
+            reasons_sell.append(f"ម៉ាក្រូ 5m ដាក់សម្ពាធមាសចុះ ({macro5m['summary_km']})")
+
         if smt_sig == "BULL_SMT":
             buy_score += 12
             f_buy.append("SMT_BULL")
-            reasons_buy.insert(0, "XAU/XAG SMT ▲ — ប្រាក់មិនចុះតាមមាស (ស្ថាប័នប្រមូលទិញ)")
+            reasons_buy.insert(0, macro5m["smt_km"])
         elif smt_sig == "BEAR_SMT":
             sell_score += 12
             f_sell.append("SMT_BEAR")
-            reasons_sell.insert(0, "XAU/XAG SMT ▼ — ប្រាក់មិនឡើងតាមមាស (អន្ទាក់លក់ចុះ)")
+            reasons_sell.insert(0, macro5m["smt_km"])
 
         if mtf_al == "BUY":
             buy_score += 12
@@ -697,6 +838,10 @@ class AdvancedExpertAnalyst:
         traps: list[str] = []
         hard_stop = False
 
+        if tilt["locked"]:
+            traps.append(tilt["reason_km"])
+            hard_stop = True
+
         if kz["code"] == "WEEKEND_CLOSED":
             traps.append("ទីផ្សារ Forex បិទចុងសប្តាហ៍ — មិនអាចជួញដូរបានទេ (បើកវិញថ្ងៃច័ន្ទ 05:00 ព្រឹក)")
             hard_stop = True
@@ -712,6 +857,12 @@ class AdvancedExpertAnalyst:
         if spread > 1.20:
             traps.append(f"Spread រីកធំ (${spread:.2f}) — ថ្លៃដើមខ្ពស់ ងាយខាតភ្លាមពេលចូល!")
             hard_stop = True
+
+        # ប្លុកអន្ទាក់ពេលដុល្លារ 5m ហក់បញ្ច្រាសខ្លាំង
+        if bias == "BUY" and macro5m["dxy_dir"] == "UP" and macro5m["dxy_chg_5m"] >= 0.08:
+            traps.append(f"ប្រយ័ត្ន! ដុល្លារ DXY 5m កំពុងហក់ឡើងខ្លាំង (+{macro5m['dxy_chg_5m']:.2f}%) — ហាមទិញមាសបញ្ច្រាស!")
+        elif bias == "SELL" and macro5m["dxy_dir"] == "DOWN" and macro5m["dxy_chg_5m"] <= -0.08:
+            traps.append(f"ប្រយ័ត្ន! ដុល្លារ DXY 5m កំពុងធ្លាក់ខ្លាំង ({macro5m['dxy_chg_5m']:.2f}%) — ហាមលក់មាសបញ្ច្រាស!")
 
         if dr["regime"] == "CHOPPY":
             traps.append("ទីផ្សារកំពុង Chop/រញ៉េរញ៉ៃ — អន្ទាក់ស៊ី SL ញឹកញាប់បំផុត កុំប្រថុយចូលកណ្តាលផ្លូវ!")
@@ -798,7 +949,7 @@ class AdvancedExpertAnalyst:
         rr_val = round(abs(tp1 - entry) / max(0.5, abs(entry - sl)), 2)
         risk_guide = self._calc_safe_lot_guide(abs(entry - sl), spread)
         checklist = self._build_7point_checklist(
-            bias, price, ema20, ema50, dr, cvd_pct, cvd_div, mtf_al, brain, kz, rr_val, news, traps
+            bias, price, ema20, ema50, dr, cvd_pct, cvd_div, mtf_al, macro5m, kz, rr_val, news, traps
         )
 
         can_execute = (
@@ -809,13 +960,46 @@ class AdvancedExpertAnalyst:
             and rr_val >= 1.40
         )
 
+        # ==================== TRIPLE-LOCK SNIPER A++ CONSENSUS ====================
+        lock1_ai = bool(
+            can_execute
+            and final_score >= 74
+            and checklist["passed"] >= 6
+            and (brain.get("side") == bias or brain.get("score_breakdown", {}).get("candidate_side") == bias)
+        )
+        lock2_structure = bool(
+            (bias == "BUY" and dr["sweep"] == "BULL_SWEEP")
+            or (bias == "SELL" and dr["sweep"] == "BEAR_SWEEP")
+            or (dr["regime"] == "TRENDING" and edge_margin >= 24)
+        )
+        macro_against = (
+            (bias == "BUY" and (macro5m["macro_gold_bias"] == "BEARISH_GOLD" or smt_sig == "BEAR_SMT"))
+            or (bias == "SELL" and (macro5m["macro_gold_bias"] == "BULLISH_GOLD" or smt_sig == "BULL_SMT"))
+        )
+        lock3_macro = bool((not macro_against) and (not news.get("danger")) and (not kz["is_dead"]))
+
+        is_sniper_app = lock1_ai and lock2_structure and lock3_macro
+        triple_lock = {
+            "is_sniper_app": is_sniper_app,
+            "locks_passed": int(lock1_ai) + int(lock2_structure) + int(lock3_macro),
+            "lock1_ai": lock1_ai,
+            "lock2_structure": lock2_structure,
+            "lock3_macro": lock3_macro,
+            "label_km": "💎 SNIPER A++ (សោរ ៣/៣ បើកពេញ!)" if is_sniper_app else f"សោរស្ថាប័ន {int(lock1_ai) + int(lock2_structure) + int(lock3_macro)}/3",
+        }
+
         if hard_stop or traps:
             verdict_code = "BLOCKED"
-            grade = "RISK"
-            verdict_km = "⛔ ហាមចូល — កុំប្រថុយលុយពិតពេលនេះ"
+            grade = "TILT" if tilt["locked"] else "RISK"
+            verdict_km = "🔒 ចាក់សោរការពារគណនីប្រចាំថ្ងៃ" if tilt["locked"] else "⛔ ហាមចូល — កុំប្រថុយលុយពិតពេលនេះ"
             sub_km = traps[0]
             if kz["code"] == "WEEKEND_CLOSED":
                 entry_km = "ទីផ្សារបិទ — រង់ចាំថ្ងៃច័ន្ទម៉ោង 14:00 (London) ឬ 19:20 (NY Overlap)"
+        elif is_sniper_app and entry_mode == "NOW":
+            verdict_code = f"READY_{bias}"
+            grade = "A++"
+            verdict_km = f"💎 SNIPER A++ {'ទិញ (BUY)' if bias == 'BUY' else 'លក់ (SELL)'} • {final_score}%"
+            sub_km = f"សោរ ៣ ជាន់ស្របគ្នា ១០០% (V8 + Structure + DXY/SMT) — ឱកាសកម្រ ដាក់ SL ${sl:.2f} ដាច់ខាត!"
         elif can_execute and entry_mode == "NOW":
             verdict_code = f"READY_{bias}"
             grade = "A+" if final_score >= 78 else "A"
@@ -827,14 +1011,14 @@ class AdvancedExpertAnalyst:
             )
         elif can_execute:
             verdict_code = f"LIMIT_{bias}"
-            grade = "A" if final_score >= 72 else "B+"
+            grade = "A++" if is_sniper_app else ("A" if final_score >= 72 else "B+")
             verdict_km = f"⏳ រង់ចាំ {'BUY' if bias == 'BUY' else 'SELL'} Limit @ ${entry:.2f} ({grade})"
             sub_km = "កុំដេញតម្លៃ! ដាក់ Limit ឬរង់ចាំតម្លៃមកប៉ះចំណុចចូលល្អសិន"
         else:
             verdict_code = "WAIT"
             grade = "WATCH"
             verdict_km = f"⏳ មិនទាន់មានជើងស្អាត (ផ្អៀង {bias} • {final_score}%)"
-            sub_km = "ការពិត៖ ពិន្ទុមិនទាន់ដល់កម្រិតឈ្នះខ្ពស់ទេ — រក្សាដើមទុនចាំឱកាស A/A+ ល្អជាង"
+            sub_km = "ការពិត៖ ពិន្ទុមិនទាន់ដល់កម្រិតឈ្នះខ្ពស់ទេ — រក្សាដើមទុនចាំឱកាស A/A++ ល្អជាង"
 
         last_hi = safe_float(candles[-1].get("high"), price) if candles else price
         last_lo = safe_float(candles[-1].get("low"), price) if candles else price
@@ -873,6 +1057,9 @@ class AdvancedExpertAnalyst:
             "confidence": int(final_score),
             "verdict_km": verdict_km,
             "sub_km": sub_km,
+            "triple_lock": triple_lock,
+            "macro_5m": macro5m,
+            "tilt_lock": tilt,
             "killzone": kz,
             "regime": {"code": dr["regime"], "km": dr["regime_km"]},
             "checklist": checklist,
@@ -905,9 +1092,7 @@ class AdvancedExpertAnalyst:
 
     # ==================== 5-DAY AUTO-REPLAY BACKTEST & CALIBRATION ====================
     def _load_5day_5m_bars(self, fallback_candles: list[dict]) -> tuple[list[dict], str]:
-        """ទាញទៀន 5m រយៈពេល 5 ថ្ងៃចុងក្រោយពី Gold Futures (GC=F) ឬប្រើទៀនផ្ទាល់ពី Feed"""
         try:
-            import yfinance as yf
             df = yf.download("GC=F", period="5d", interval="5m", progress=False, auto_adjust=False)
             if df is not None and not df.empty and len(df) >= 120:
                 bars = []
@@ -917,8 +1102,7 @@ class AdvancedExpertAnalyst:
                     l = safe_float(row["Low"].iloc[0] if hasattr(row["Low"], "iloc") else row["Low"])
                     c = safe_float(row["Close"].iloc[0] if hasattr(row["Close"], "iloc") else row["Close"])
                     if c > 0 and h >= l:
-                        ts = int(idx.timestamp())
-                        bars.append({"time": ts, "open": o, "high": h, "low": l, "close": c})
+                        bars.append({"time": int(idx.timestamp()), "open": o, "high": h, "low": l, "close": c})
                 if len(bars) >= 120:
                     return bars, f"5 ថ្ងៃចុងក្រោយ ({len(bars)} ទៀន 5m)"
         except Exception as e:
@@ -933,12 +1117,6 @@ class AdvancedExpertAnalyst:
         spread: float = 0.30,
         train_memory: bool = True,
     ) -> dict:
-        """
-        រត់សាកល្បង Walk-Forward លើទៀន 5m ពិត 5 ថ្ងៃចុងក្រោយ (គ្មានការលួចមើលអនាគត)៖
-        - ដកថ្លៃ Spread + Commission ពិត
-        - រំកិល BE ស្វ័យប្រវត្តិពេលដល់ 1R និងកាត់ចំណេញនៅ TP1 (1.8R)
-        - រាប់ចំនួនអន្ទាក់ដែលប្រព័ន្ធបានការពារ (Chop / Dead Zone / Premium-Discount / VWAP Ext)
-        """
         bars, source_km = self._load_5day_5m_bars(fallback_candles or [])
         if len(bars) < 65:
             return {"error": "ទិន្នន័យទៀន 5m មិនទាន់គ្រប់គ្រាន់សម្រាប់រត់តេស្ត (ត្រូវការយ៉ាងតិច 65 ទៀន)"}
@@ -949,11 +1127,9 @@ class AdvancedExpertAnalyst:
         opens = np.array([safe_float(b["open"]) for b in bars], dtype=float)
         times = [int(safe_float(b.get("time"), 0)) for b in bars]
 
-        # Vectorized EMA20, EMA50, ATR14, Rolling VWAP-48
         ema20 = np.zeros_like(closes)
         ema50 = np.zeros_like(closes)
-        ema20[0] = closes[0]
-        ema50[0] = closes[0]
+        ema20[0], ema50[0] = closes[0], closes[0]
         a20, a50 = 2.0 / 21.0, 2.0 / 51.0
         for i in range(1, len(closes)):
             ema20[i] = closes[i] * a20 + ema20[i - 1] * (1.0 - a20)
@@ -961,8 +1137,7 @@ class AdvancedExpertAnalyst:
 
         tr = np.maximum(highs - lows, np.maximum(np.abs(highs - np.roll(closes, 1)), np.abs(lows - np.roll(closes, 1))))
         tr[0] = highs[0] - lows[0]
-        atr14 = np.convolve(tr, np.ones(14) / 14.0, mode="same")
-        atr14 = np.maximum(atr14, 0.8)
+        atr14 = np.maximum(np.convolve(tr, np.ones(14) / 14.0, mode="same"), 0.8)
 
         cost_pips = round((max(0.15, safe_float(spread, 0.30)) * 10.0) + COMM_PIPS, 1)
         trades: list[dict] = []
@@ -971,25 +1146,21 @@ class AdvancedExpertAnalyst:
         peak_eq = 0.0
         max_dd_pips = 0.0
 
-        i = 55
-        n = len(bars)
+        i, n = 55, len(bars)
         while i < n - 6:
             ts = times[i]
             dt_utc = datetime.fromtimestamp(ts, tz=timezone.utc) if ts > 0 else datetime.now(timezone.utc)
             dt_kh = dt_utc.astimezone(TZ_KH)
             hm = dt_kh.hour + dt_kh.minute / 60.0
 
-            # ម៉ោងងាប់ 02:30–07:00 កម្ពុជា -> ប្លុក
             if 2.5 <= hm < 7.0:
                 traps_avoided += 1
                 i += 1
                 continue
 
             is_golden = (14.0 <= hm < 17.5) or (19.33 <= hm < 23.0)
-            px = float(closes[i])
-            e20, e50, atr = float(ema20[i]), float(ema50[i]), float(atr14[i])
+            px, e20, e50, atr = float(closes[i]), float(ema20[i]), float(ema50[i]), float(atr14[i])
 
-            # 48-bar Dealing Range + VWAP proxy
             r_hi = float(np.max(highs[i - 47:i + 1]))
             r_lo = float(np.min(lows[i - 47:i + 1]))
             span = max(r_hi - r_lo, 1.0)
@@ -997,55 +1168,41 @@ class AdvancedExpertAnalyst:
             zone = "PREMIUM" if pos_pct >= 62.0 else ("DISCOUNT" if pos_pct <= 38.0 else "EQUILIBRIUM")
             vwap = float(np.mean((highs[i - 35:i + 1] + lows[i - 35:i + 1] + closes[i - 35:i + 1]) / 3.0))
 
-            # Efficiency Ratio (Chop filter)
             net_m = abs(float(closes[i] - closes[i - 15]))
             path_l = float(np.sum(np.abs(np.diff(closes[i - 15:i + 1]))))
             eff = net_m / max(path_l, 0.01)
 
-            # Bar momentum & sweep check
             prev_hi = float(np.max(highs[i - 14:i - 2]))
             prev_lo = float(np.min(lows[i - 14:i - 2]))
             bull_sweep = float(np.min(lows[i - 2:i + 1])) < prev_lo and px > prev_lo
             bear_sweep = float(np.max(highs[i - 2:i + 1])) > prev_hi and px < prev_hi
-            bar_bull = px > float(opens[i])
-            bar_bear = px < float(opens[i])
 
-            buy_pts, sell_pts = 0, 0
-            fb, fs = [], []
-
+            buy_pts, sell_pts, fb, fs = 0, 0, [], []
             if px > e20 and e20 >= e50:
-                buy_pts += 22
-                fb.append("EMA_TREND_UP")
+                buy_pts += 22; fb.append("EMA_TREND_UP")
             elif px < e20 and e20 <= e50:
-                sell_pts += 22
-                fs.append("EMA_TREND_DN")
+                sell_pts += 22; fs.append("EMA_TREND_DN")
 
             if zone == "DISCOUNT":
-                buy_pts += 18
-                fb.append("DISCOUNT_ZONE")
+                buy_pts += 18; fb.append("DISCOUNT_ZONE")
             elif zone == "PREMIUM":
-                sell_pts += 18
-                fs.append("PREMIUM_ZONE")
+                sell_pts += 18; fs.append("PREMIUM_ZONE")
 
             if bull_sweep:
-                buy_pts += 18
-                fb.append("BULL_SWEEP")
+                buy_pts += 18; fb.append("BULL_SWEEP")
             elif bear_sweep:
-                sell_pts += 18
-                fs.append("BEAR_SWEEP")
+                sell_pts += 18; fs.append("BEAR_SWEEP")
 
             vwap_d = px - vwap
             max_ext = max(atr * 3.0, 6.0)
             if 0.0 <= vwap_d <= max_ext:
-                buy_pts += 12
-                fb.append("VWAP_BULL")
+                buy_pts += 12; fb.append("VWAP_BULL")
             elif -max_ext <= vwap_d <= 0.0:
-                sell_pts += 12
-                fs.append("VWAP_BEAR")
+                sell_pts += 12; fs.append("VWAP_BEAR")
 
-            if bar_bull:
+            if px > float(opens[i]):
                 buy_pts += 8
-            elif bar_bear:
+            elif px < float(opens[i]):
                 sell_pts += 8
 
             if is_golden:
@@ -1059,22 +1216,14 @@ class AdvancedExpertAnalyst:
             margin = abs(buy_pts - sell_pts)
             factors = fb if side == "BUY" else fs
 
-            # Anti-Trap Filters
             if score >= 56 and margin >= 18:
                 if eff < 0.22:
-                    traps_avoided += 1
-                    i += 1
-                    continue
+                    traps_avoided += 1; i += 1; continue
                 if side == "BUY" and (zone == "PREMIUM" and eff < 0.42 or vwap_d > max_ext):
-                    traps_avoided += 1
-                    i += 1
-                    continue
+                    traps_avoided += 1; i += 1; continue
                 if side == "SELL" and (zone == "DISCOUNT" and eff < 0.42 or vwap_d < -max_ext):
-                    traps_avoided += 1
-                    i += 1
-                    continue
+                    traps_avoided += 1; i += 1; continue
 
-                # Execute causal walk-forward trade on future bars [i+1 .. i+36]
                 entry = px
                 risk = max(atr * 1.45, 2.2)
                 sl = (entry - risk) if side == "BUY" else (entry + risk)
@@ -1095,34 +1244,19 @@ class AdvancedExpertAnalyst:
 
                     if side == "BUY":
                         if lj <= sl:
-                            exit_px = sl
-                            outcome = "BE_WIN" if be_locked else "LOSS"
-                            exit_idx = j
-                            break
+                            exit_px, outcome, exit_idx = sl, ("BE_WIN" if be_locked else "LOSS"), j; break
                         if hj >= tp1:
-                            exit_px = tp1
-                            outcome = "TP1_WIN"
-                            exit_idx = j
-                            break
+                            exit_px, outcome, exit_idx = tp1, "TP1_WIN", j; break
                     else:
                         if hj >= sl:
-                            exit_px = sl
-                            outcome = "BE_WIN" if be_locked else "LOSS"
-                            exit_idx = j
-                            break
+                            exit_px, outcome, exit_idx = sl, ("BE_WIN" if be_locked else "LOSS"), j; break
                         if lj <= tp1:
-                            exit_px = tp1
-                            outcome = "TP1_WIN"
-                            exit_idx = j
-                            break
+                            exit_px, outcome, exit_idx = tp1, "TP1_WIN", j; break
 
                 diff = (exit_px - entry) if side == "BUY" else (entry - exit_px)
                 pips = round((diff * 10.0) - cost_pips, 1)
-                is_win = pips > 0
-
                 kz_tag = "NY_OVERLAP" if (19.33 <= hm < 23.0) else ("LONDON_OPEN" if (14.0 <= hm < 17.5) else "OTHER")
-                vwap_tag = "ABOVE_VWAP" if px >= vwap else "BELOW_VWAP"
-                sig = f"{side}|{zone}|{vwap_tag}|REPLAY|MIXED|{kz_tag}"
+                sig = f"{side}|{zone}|{'ABOVE_VWAP' if px >= vwap else 'BELOW_VWAP'}|REPLAY|MIXED|{kz_tag}"
 
                 trades.append({
                     "time_kh": dt_kh.strftime("%d/%m %H:%M"),
@@ -1131,7 +1265,7 @@ class AdvancedExpertAnalyst:
                     "exit": round(exit_px, 2),
                     "outcome": outcome,
                     "pips": pips,
-                    "is_win": is_win,
+                    "is_win": pips > 0,
                     "signature": sig,
                     "factors": factors,
                 })
@@ -1140,11 +1274,7 @@ class AdvancedExpertAnalyst:
                 equity_curve.append(cur_eq)
                 if cur_eq > peak_eq:
                     peak_eq = cur_eq
-                dd = round(peak_eq - cur_eq, 1)
-                if dd > max_dd_pips:
-                    max_dd_pips = dd
-
-                # រំលងដល់ពេលជើងបិទ + 2 ទៀន (គ្មាន Overlapping Trade)
+                max_dd_pips = max(max_dd_pips, round(peak_eq - cur_eq, 1))
                 i = exit_idx + 2
                 continue
 
@@ -1158,12 +1288,8 @@ class AdvancedExpertAnalyst:
         net_pips = round(sum(t["pips"] for t in trades), 1)
         win_rate = round((wins / total) * 100.0, 1) if total > 0 else 0.0
         pf = round(gross_win / gross_loss, 2) if gross_loss > 0 else (9.99 if gross_win > 0 else 0.0)
-        net_usd_001 = round(net_pips * 0.10, 2)  # 0.01 lot = $0.10 / pip
 
-        seeded = False
-        if train_memory and trades:
-            seeded = self.memory.seed_from_replay(trades, traps_avoided)
-
+        seeded = self.memory.seed_from_replay(trades, traps_avoided) if (train_memory and trades) else False
         return {
             "source_km": source_km,
             "total_trades": total,
@@ -1172,7 +1298,7 @@ class AdvancedExpertAnalyst:
             "win_rate": win_rate,
             "profit_factor": pf,
             "net_pips": net_pips,
-            "net_usd_001": net_usd_001,
+            "net_usd_001": round(net_pips * 0.10, 2),
             "max_dd_pips": max_dd_pips,
             "traps_avoided": traps_avoided,
             "cost_pips": cost_pips,

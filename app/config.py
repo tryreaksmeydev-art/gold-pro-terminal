@@ -1,10 +1,33 @@
 import os
 import math
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import requests
 from requests.adapters import HTTPAdapter
+
+
+# ==================== AUTO-LOAD .env FILE ====================
+def _load_dotenv_file():
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.exists():
+        return
+    try:
+        for line in env_path.read_text(encoding="utf-8-sig").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip().strip('"').strip("'")
+            if k and v:
+                os.environ.setdefault(k, v)
+    except Exception as e:
+        print(f"[CONFIG] .env load warning: {e}")
+
+
+_load_dotenv_file()
 
 
 # ==================== TIMEZONE & FORMAT HELPERS ====================
@@ -49,7 +72,7 @@ APP_TITLE = "TRI PISAL • Gold XAU/USD Pro Terminal (V10.6 Modular)"
 APP_VERSION = "10.6-modular-hardened"
 
 OANDA_API_KEY = os.getenv("OANDA_API_KEY", "").strip()
-TWELVE_DATA_KEY = os.getenv("TWELVE_DATA_API_KEY", "").strip()
+TWELVE_DATA_KEY = (os.getenv("TWELVE_DATA_KEY") or os.getenv("TWELVE_DATA_API_KEY") or "").strip()
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "").strip()
 
 VALID_INTERVALS = ("1m", "5m", "15m", "1h", "4h", "1d")
