@@ -1,0 +1,62 @@
+{
+  "total_wins": 2,
+  "total_losses": 0,
+  "mistakes_blocked": 148,
+  "net_pips": 402.6,
+  "patterns": {
+    "BUY|PREMIUM|ABOVE_VWAP|REPLAY|MIXED|NY_OVERLAP": {
+      "wins": 1,
+      "losses": 0,
+      "streak_loss": 0,
+      "streak_win": 1,
+      "last_ts": 1795849560
+    },
+    "SELL|EQUILIBRIUM|BELOW_VWAP|REPLAY|MIXED|OTHER": {
+      "wins": 1,
+      "losses": 0,
+      "streak_loss": 0,
+      "streak_win": 1,
+      "last_ts": 1795849560
+    }
+  },
+  "factor_stats": {
+    "EMA_TREND_UP": {
+      "wins": 1,
+      "losses": 0
+    },
+    "BULL_SWEEP": {
+      "wins": 1,
+      "losses": 0
+    },
+    "VWAP_BULL": {
+      "wins": 1,
+      "losses": 0
+    },
+    "EMA_TREND_DN": {
+      "wins": 1,
+      "losses": 0
+    },
+    "BEAR_SWEEP": {
+      "wins": 1,
+      "losses": 0
+    },
+    "VWAP_BEAR": {
+      "wins": 1,
+      "losses": 0
+    }
+  },
+  "active_trade": null,
+  "learned_log": [
+    {
+      "time_kh": "28/11 14:06",
+      "side": "REPLAY",
+      "result": "WIN",
+      "pips": 402.6,
+      "entry": 0.0,
+      "exit": 0.0,
+      "signature": "5D_REPLAY",
+      "lesson_km": "ហ្វឹកហាត់ 5 ថ្ងៃ៖ រៀន 2 ជើង (ឈ្នះ 2/ខាត 0) • ការពារអន្ទាក់ 148 ដង"
+    }
+  ],
+  "last_replay_day": "2026-11-28"
+}

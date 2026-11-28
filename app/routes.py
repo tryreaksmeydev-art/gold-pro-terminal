@@ -73,6 +73,20 @@ async def get_expert_analyst_5m():
     return await asyncio.to_thread(expert_analyst.analyze, payload_5m)
 
 
+@router.get("/api/expert-replay")
+async def run_expert_replay_5d(train: int = Query(1, ge=0, le=1)):
+    """រត់តេស្ត Backtest 5 ថ្ងៃចុងក្រោយលើទៀន 5m និងហ្វឹកហាត់ខួរក្បាលទុកជាមុន"""
+    payload_5m = await asyncio.to_thread(build_full_payload_sync, "5m", False)
+    candles = (payload_5m or {}).get("candles") or []
+    spread = float((payload_5m or {}).get("spread") or 0.30)
+    return await asyncio.to_thread(
+        expert_analyst.run_5day_replay,
+        candles,
+        spread,
+        bool(train),
+    )
+
+
 @router.post("/api/ai-chat")
 async def ai_chat(req: ChatRequest):
     if req.preset not in ALLOWED_PRESETS:

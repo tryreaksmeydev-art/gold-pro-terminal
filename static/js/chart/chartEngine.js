@@ -2,6 +2,7 @@ import { TF_SECONDS } from '../core/config.js';
 import { bus } from '../core/eventBus.js';
 import { $, toNum, sanitizeCandles, sanitizeLineData } from '../core/utils.js';
 import { SmcOverlay } from './smcOverlay.js';
+import { impulseGhostLayer } from './impulseGhostLayer.js';
 
 class ChartEngine {
   constructor() {
@@ -97,12 +98,15 @@ class ChartEngine {
       priceLineVisible: false,
     });
 
+
     this.overlay = new SmcOverlay(this.container, $('signalCanvas'), this.chart, this.candleSeries);
     this.overlay.setOptions({
       showZones: prefs.showZones !== false,
       showSignals: prefs.showSignals !== false,
     });
+    impulseGhostLayer.init(this.overlay); // <--- បន្ថែមត្រង់បន្ទាត់ទី ១០៦ នេះ
 
+    this._bindChartEvents();
     this._bindChartEvents();
     this._bindBusEvents();
     this._startCountdownTimer();

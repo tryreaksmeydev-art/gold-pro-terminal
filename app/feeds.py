@@ -22,6 +22,58 @@ _quote_state_lock = threading.Lock()
 _last_quote_state = {"price": 0.0, "ts": 0.0}
 
 
+# ==================== FOREX MARKET HOURS & OHLC SANITIZER ====================
+def _is_forex_weekend_utc(now_utc: datetime | None = None) -> bool:
+    """ទីផ្សារ Forex XAU/USD បិទពីថ្ងៃសុក្រ 22:00 UTC ដល់ថ្ងៃអាទិត្យ 22:00 UTC"""
+    dt = now_utc or datetime.now(timezone.utc)
+    wd = dt.weekday()  # 0=Mon .. 4=Fri, 5=Sat, 6=Sun
+    return wd == 5 or (wd == 4 and dt.hour >= 22) or (wd == 6 and dt.hour < 22)
+
+
+def _trim_weekend_candles(df: pd.DataFrame) -> pd.DataFrame:
+    """កាត់ចោលទៀន Crypto ចុងសប្តាហ៍ (សុក្រ >= 22:00 UTC ដល់ អាទិត្យ < 22:00 UTC) ឱ្យត្រូវនឹង MT5"""
+    if df is None or df.empty or "datetime" not in df.columns:
+        return df
+    dt_s = pd.to_datetime(df["datetime"], utc=True)
+    wd = dt_s.dt.weekday
+    hr = dt_s.dt.hour
+    is_wknd = (wd == 5) | ((wd == 4) & (hr >= 22)) | ((wd == 6) & (hr < 22))
+    trimmed = df.loc[~is_wknd].reset_index(drop=True)
+    return trimmed if len(trimmed) > 5 else df
+
+
+def _clean_ohlc_df(df: pd.DataFrame) -> pd.DataFrame:
+    """សម្អាតទៀនឱ្យស្អាតកម្រិត Pro (លុបម៉ោងជាន់, កែ High/Low និងច្រោះ Bad Tick >$40)"""
+    if df is None or df.empty:
+        return df
+    df = df.copy()
+    df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
+    for col in ("open", "high", "low", "close"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    if "volume" not in df.columns:
+        df["volume"] = 0.0
+    else:
+        df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0.0)
+
+    df = df.dropna(subset=["datetime", "open", "high", "low", "close"])
+    df = df.drop_duplicates(subset=["datetime"], keep="last").sort_values("datetime").reset_index(drop=True)
+    if len(df) < 3:
+        return df
+
+    # ច្រោះ Bad Tick តែ ១ ទៀនដែលលោតខុសប្រក្រតីលើស $45 ធៀបនឹង Median 5 ទៀនជុំវិញ
+    med_c = df["close"].rolling(5, center=True, min_periods=1).median()
+    valid_mask = (df["close"] > 1000.0) & ((df["close"] - med_c).abs() <= 45.0)
+    if valid_mask.sum() >= 5:
+        df = df.loc[valid_mask].reset_index(drop=True)
+
+    # ធានាថា High >= max(O,C) និង Low <= min(O,C) ជានិច្ច
+    oc_max = np.maximum(df["open"].to_numpy(), df["close"].to_numpy())
+    oc_min = np.minimum(df["open"].to_numpy(), df["close"].to_numpy())
+    df["high"] = np.maximum(df["high"].to_numpy(), oc_max)
+    df["low"] = np.minimum(df["low"].to_numpy(), oc_min)
+    return df
+
+
 # ==================== LIVE FOREX SPOT XAU/USD QUOTE ENGINE ====================
 def _fetch_swissquote_xau() -> dict | None:
     try:
@@ -46,13 +98,16 @@ def _fetch_swissquote_xau() -> dict | None:
                         break
                 if best:
                     bid, ask = best
+                    closed = _is_forex_weekend_utc()
                     return {
-                        "price": safe_float((bid + ask) / 2),
+                        "price": bid,  # ប្រើ Bid ដូច MT5 ដើម្បីឱ្យ Header និងក្រាហ្វិកស៊ីគ្នា ១០០%
+                        "mid": safe_float((bid + ask) / 2),
                         "bid": bid,
                         "ask": ask,
                         "spread": safe_float(max(0.0, ask - bid)),
                         "is_forex": True,
-                        "feed": "Forex Spot Live • XAU/USD",
+                        "market_closed": closed,
+                        "feed": "Market Closed • XAU/USD" if closed else "Forex Spot Live • XAU/USD",
                     }
     except Exception:
         pass
@@ -68,8 +123,9 @@ def _fetch_binance_paxg_ticker() -> dict | None:
             bid, ask = safe_float(d.get("bidPrice")), safe_float(d.get("askPrice"))
             if bid > 1000 and ask > 1000:
                 return {
-                    "price": safe_float((bid + ask) / 2), "bid": bid, "ask": ask,
-                    "spread": safe_float(max(0.0, ask - bid)), "is_forex": False, "feed": "PAXG/USD",
+                    "price": bid, "mid": safe_float((bid + ask) / 2), "bid": bid, "ask": ask,
+                    "spread": safe_float(max(0.0, ask - bid)), "is_forex": False,
+                    "market_closed": _is_forex_weekend_utc(), "feed": "PAXG/USD",
                 }
     except Exception:
         pass
@@ -86,8 +142,9 @@ def _fetch_okx_xaut_ticker() -> dict | None:
                 bid, ask = safe_float(data[0].get("bidPx")), safe_float(data[0].get("askPx"))
                 if bid > 1000 and ask > 1000:
                     return {
-                        "price": safe_float((bid + ask) / 2), "bid": bid, "ask": ask,
-                        "spread": safe_float(max(0.0, ask - bid)), "is_forex": False, "feed": "XAUT/USD",
+                        "price": bid, "mid": safe_float((bid + ask) / 2), "bid": bid, "ask": ask,
+                        "spread": safe_float(max(0.0, ask - bid)), "is_forex": False,
+                        "market_closed": _is_forex_weekend_utc(), "feed": "XAUT/USD",
                     }
     except Exception:
         pass
@@ -95,6 +152,8 @@ def _fetch_okx_xaut_ticker() -> dict | None:
 
 
 def _fetch_live_quote_raw() -> dict | None:
+    closed = _is_forex_weekend_utc()
+
     if OANDA_API_KEY:
         try:
             url = "https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles?granularity=S5&count=1&price=BA"
@@ -104,8 +163,10 @@ def _fetch_live_quote_raw() -> dict | None:
                 bid, ask = safe_float(c["bid"]["c"]), safe_float(c["ask"]["c"])
                 if bid > 0 and ask > 0:
                     return {
-                        "price": safe_float((bid + ask) / 2), "bid": bid, "ask": ask,
-                        "spread": safe_float(max(0.0, ask - bid)), "is_forex": True, "feed": "OANDA Spot • XAU/USD",
+                        "price": bid, "mid": safe_float((bid + ask) / 2), "bid": bid, "ask": ask,
+                        "spread": safe_float(max(0.0, ask - bid)), "is_forex": True,
+                        "market_closed": closed,
+                        "feed": "Market Closed • OANDA XAU/USD" if closed else "OANDA Spot • XAU/USD",
                     }
         except Exception:
             pass
@@ -122,8 +183,24 @@ def _fetch_live_quote_raw() -> dict | None:
                 p = safe_float(res["price"])
                 if p > 0:
                     return {
-                        "price": p, "bid": p, "ask": safe_float(p + 0.25),
-                        "spread": 0.25, "is_forex": True, "feed": "Twelve Data • XAU/USD",
+                        "price": p, "mid": safe_float(p + 0.12), "bid": p, "ask": safe_float(p + 0.25),
+                        "spread": 0.25, "is_forex": True, "market_closed": closed,
+                        "feed": "Market Closed • XAU/USD" if closed else "Twelve Data • XAU/USD",
+                    }
+        except Exception:
+            pass
+
+    # ថ្ងៃបិទផ្សារ៖ កុំយកតម្លៃ Crypto PAXG ដែលលោតខុសពី Forex មកបង្ហាញ បើអាចយកតម្លៃបិទថ្ងៃសុក្របាន
+    if closed:
+        try:
+            df_c = yf.Ticker("GC=F").history(period="2d", interval="1h")
+            if df_c is not None and not df_c.empty:
+                p = safe_float(df_c["Close"].iloc[-1], 0.0)
+                if p > 1000:
+                    return {
+                        "price": p, "mid": safe_float(p + 0.15), "bid": p, "ask": safe_float(p + 0.30),
+                        "spread": 0.30, "is_forex": True, "market_closed": True,
+                        "feed": "Market Closed • Gold Close",
                     }
         except Exception:
             pass
@@ -136,7 +213,8 @@ def _fetch_live_quote_raw() -> dict | None:
 
 
 def fetch_live_quote() -> dict | None:
-    return cache.get_or_fetch("live_quote", 1.8, _fetch_live_quote_raw)
+    ttl = 60.0 if _is_forex_weekend_utc() else 1.8
+    return cache.get_or_fetch("live_quote", ttl, _fetch_live_quote_raw)
 
 
 # ==================== REAL-TIME ORDER FLOW ENGINE (BINANCE + OKX) ====================
@@ -181,6 +259,13 @@ def _fetch_okx_order_flow() -> tuple[float, float, int]:
 
 
 def _fetch_order_flow_raw() -> dict:
+    # ថ្ងៃបិទផ្សារ Forex៖ បង្កក Order Flow កុំឱ្យទិន្នន័យ Crypto បោកខួរក្បាល AI
+    if _is_forex_weekend_utc():
+        return {
+            "buy_pct": 50.0, "sell_pct": 50.0,
+            "buy_vol": 0.0, "sell_vol": 0.0, "trades_count": 0, "source": "CLOSED",
+        }
+
     f_bn = io_executor.submit(_fetch_binance_order_flow)
     f_okx = io_executor.submit(_fetch_okx_order_flow)
     try:
@@ -212,7 +297,8 @@ def _fetch_order_flow_raw() -> dict:
 
 
 def fetch_order_flow() -> dict:
-    res = cache.get_or_fetch("order_flow", 5.0, _fetch_order_flow_raw)
+    ttl = 60.0 if _is_forex_weekend_utc() else 5.0
+    res = cache.get_or_fetch("order_flow", ttl, _fetch_order_flow_raw)
     return res or {
         "buy_pct": 50.0, "sell_pct": 50.0,
         "buy_vol": 0.0, "sell_vol": 0.0, "trades_count": 0, "source": "CANDLES",
@@ -236,6 +322,15 @@ def _fetch_cross_prices_raw() -> dict:
 
 
 def check_cross_source_sanity(live_price: float, basis: float = 0.0) -> dict:
+    if _is_forex_weekend_utc():
+        return {
+            "ok": True,
+            "glitch_detected": False,
+            "deviation": 0.0,
+            "sources_checked": 1,
+            "note": "ទីផ្សារបិទចុងសប្តាហ៍ (បង្កកតម្លៃបិទថ្ងៃសុក្រ)",
+        }
+
     now = time.monotonic()
     spike_glitch = False
     spike_note = ""
@@ -280,78 +375,8 @@ def check_cross_source_sanity(live_price: float, basis: float = 0.0) -> dict:
     }
 
 
-# ==================== CANDLE DATA FETCHERS (5 SOURCES FALLBACK) ====================
-def _fetch_gold_raw(interval: str) -> tuple[pd.DataFrame, str, bool, str] | None:
-    limit = 260 if interval == "1h" else 160
-
-    if OANDA_API_KEY:
-        try:
-            gran = {"1m": "M1", "5m": "M5", "15m": "M15", "1h": "H1", "4h": "H4", "1d": "D"}.get(interval, "M5")
-            url = f"https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles?granularity={gran}&count={limit}&price=M"
-            res = http_session.get(url, headers={"Authorization": f"Bearer {OANDA_API_KEY}"}, timeout=(2.5, 4.5)).json()
-            if "candles" in res and len(res["candles"]) > 5:
-                rows = [{
-                    "datetime": pd.to_datetime(c["time"], utc=True),
-                    "open": float(c["mid"]["o"]), "high": float(c["mid"]["h"]),
-                    "low": float(c["mid"]["l"]), "close": float(c["mid"]["c"]),
-                    "volume": float(c.get("volume", 0.0)),
-                } for c in res["candles"]]
-                return pd.DataFrame(rows), "OANDA Spot • XAU/USD", True, "OANDA"
-        except Exception as e:
-            print(f"[OANDA] {e}")
-
-    if TWELVE_DATA_KEY:
-        try:
-            td_int = {"1m": "1min", "5m": "5min", "15m": "15min", "1h": "1h", "4h": "4h", "1d": "1day"}.get(interval, "5min")
-            url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval={td_int}&outputsize={limit}&apikey={TWELVE_DATA_KEY}"
-            res = http_session.get(url, timeout=(2.5, 4.5)).json()
-            if "values" in res and len(res["values"]) > 5:
-                df = pd.DataFrame(res["values"])
-                df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
-                for col in ["open", "high", "low", "close"]:
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-                df["volume"] = 0.0
-                df = df.dropna().sort_values("datetime").reset_index(drop=True)
-                if len(df) > 5:
-                    return df, "Twelve Data Spot • XAU/USD", True, "TWELVE"
-        except Exception as e:
-            print(f"[TwelveData] {e}")
-
-    try:
-        bn_int = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d"}.get(interval, "5m")
-        url = f"https://data-api.binance.vision/api/v3/klines?symbol=PAXGUSDT&interval={bn_int}&limit={limit}"
-        res = http_session.get(url, timeout=(2.5, 4.5))
-        if res.status_code == 200:
-            raw = res.json()
-            if isinstance(raw, list) and len(raw) > 5:
-                rows = [{
-                    "datetime": pd.to_datetime(int(k[0]), unit="ms", utc=True),
-                    "open": float(k[1]), "high": float(k[2]),
-                    "low": float(k[3]), "close": float(k[4]),
-                    "volume": float(k[5]),
-                } for k in raw]
-                return pd.DataFrame(rows), "Gold Spot Live • PAXG/USD", True, "PAXG"
-    except Exception as e:
-        print(f"[Binance] {e}")
-
-    try:
-        okx_bar = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1Dutc"}.get(interval, "5m")
-        url = f"https://www.okx.com/api/v5/market/candles?instId=XAUT-USDT&bar={okx_bar}&limit={min(limit, 300)}"
-        res = http_session.get(url, timeout=(2.5, 4.5))
-        if res.status_code == 200:
-            raw = res.json().get("data", [])
-            if isinstance(raw, list) and len(raw) > 5:
-                rows = [{
-                    "datetime": pd.to_datetime(int(k[0]), unit="ms", utc=True),
-                    "open": float(k[1]), "high": float(k[2]),
-                    "low": float(k[3]), "close": float(k[4]),
-                    "volume": float(k[5]) if len(k) > 5 else 0.0,
-                } for k in raw]
-                df = pd.DataFrame(rows).sort_values("datetime").reset_index(drop=True)
-                return df, "Gold Spot Live • XAUT/USD", True, "XAUT"
-    except Exception as e:
-        print(f"[OKX] {e}")
-
+# ==================== CANDLE DATA FETCHERS (FOREX-ALIGNED + WEEKEND FREEZE) ====================
+def _fetch_yahoo_gold(interval: str, limit: int) -> tuple[pd.DataFrame, str, bool, str] | None:
     try:
         ticker = yf.Ticker("GC=F")
         if interval == "4h":
@@ -377,17 +402,104 @@ def _fetch_gold_raw(interval: str) -> tuple[pd.DataFrame, str, bool, str] | None
             })
             if "volume" not in df.columns:
                 df["volume"] = 0.0
-            df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
-            df = df[["datetime", "open", "high", "low", "close", "volume"]].dropna().tail(limit).reset_index(drop=True)
+            df = _clean_ohlc_df(df[["datetime", "open", "high", "low", "close", "volume"]]).tail(limit).reset_index(drop=True)
             if len(df) > 5:
-                return df, "Yahoo Futures • GC=F", False, "YAHOO"
+                closed = _is_forex_weekend_utc()
+                label = "Market Closed • Gold Futures" if closed else "Yahoo Futures • GC=F"
+                return df, label, False, "YAHOO"
     except Exception as e:
         print(f"[Yahoo] {e}")
     return None
 
 
+def _fetch_gold_raw(interval: str) -> tuple[pd.DataFrame, str, bool, str] | None:
+    limit = 260 if interval == "1h" else 160
+    closed = _is_forex_weekend_utc()
+
+    if OANDA_API_KEY:
+        try:
+            gran = {"1m": "M1", "5m": "M5", "15m": "M15", "1h": "H1", "4h": "H4", "1d": "D"}.get(interval, "M5")
+            url = f"https://api-fxpractice.oanda.com/v3/instruments/XAU_USD/candles?granularity={gran}&count={limit}&price=B"
+            res = http_session.get(url, headers={"Authorization": f"Bearer {OANDA_API_KEY}"}, timeout=(2.5, 4.5)).json()
+            if "candles" in res and len(res["candles"]) > 5:
+                rows = [{
+                    "datetime": pd.to_datetime(c["time"], utc=True),
+                    "open": float(c["bid"]["o"]), "high": float(c["bid"]["h"]),
+                    "low": float(c["bid"]["l"]), "close": float(c["bid"]["c"]),
+                    "volume": float(c.get("volume", 0.0)),
+                } for c in res["candles"]]
+                df = _clean_ohlc_df(pd.DataFrame(rows))
+                return df, ("Market Closed • OANDA XAU/USD" if closed else "OANDA Spot • XAU/USD"), not closed, "OANDA"
+        except Exception as e:
+            print(f"[OANDA] {e}")
+
+    if TWELVE_DATA_KEY:
+        try:
+            td_int = {"1m": "1min", "5m": "5min", "15m": "15min", "1h": "1h", "4h": "4h", "1d": "1day"}.get(interval, "5min")
+            url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval={td_int}&outputsize={limit}&apikey={TWELVE_DATA_KEY}"
+            res = http_session.get(url, timeout=(2.5, 4.5)).json()
+            if "values" in res and len(res["values"]) > 5:
+                df = pd.DataFrame(res["values"])
+                df = _clean_ohlc_df(df)
+                if len(df) > 5:
+                    return df, ("Market Closed • XAU/USD" if closed else "Twelve Data Spot • XAU/USD"), not closed, "TWELVE"
+        except Exception as e:
+            print(f"[TwelveData] {e}")
+
+    # ថ្ងៃបិទផ្សារចុងសប្តាហ៍៖ ផ្តល់អាទិភាព Yahoo GC=F មុន PAXG ដើម្បីឱ្យរូបរាងទៀនថ្ងៃសុក្រដូច MT5 ១០០%
+    if closed:
+        yf_res = _fetch_yahoo_gold(interval, limit)
+        if yf_res is not None:
+            return yf_res
+
+    # Binance PAXG (ដកទៀនចុងសប្តាហ៍ចេញជានិច្ច ដើម្បីកុំឱ្យបែកទម្រង់ខុសពី Forex MT5)
+    try:
+        bn_int = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d"}.get(interval, "5m")
+        fetch_lim = min(500, limit + 160) if closed else limit
+        url = f"https://data-api.binance.vision/api/v3/klines?symbol=PAXGUSDT&interval={bn_int}&limit={fetch_lim}"
+        res = http_session.get(url, timeout=(2.5, 4.5))
+        if res.status_code == 200:
+            raw = res.json()
+            if isinstance(raw, list) and len(raw) > 5:
+                rows = [{
+                    "datetime": pd.to_datetime(int(k[0]), unit="ms", utc=True),
+                    "open": float(k[1]), "high": float(k[2]),
+                    "low": float(k[3]), "close": float(k[4]),
+                    "volume": float(k[5]),
+                } for k in raw]
+                df = _trim_weekend_candles(_clean_ohlc_df(pd.DataFrame(rows))).tail(limit).reset_index(drop=True)
+                if len(df) > 5:
+                    return df, ("Market Closed • Gold Close" if closed else "Gold Spot Live • PAXG/USD"), not closed, "PAXG"
+    except Exception as e:
+        print(f"[Binance] {e}")
+
+    try:
+        okx_bar = {"1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1Dutc"}.get(interval, "5m")
+        url = f"https://www.okx.com/api/v5/market/candles?instId=XAUT-USDT&bar={okx_bar}&limit={min(300, limit + 120)}"
+        res = http_session.get(url, timeout=(2.5, 4.5))
+        if res.status_code == 200:
+            raw = res.json().get("data", [])
+            if isinstance(raw, list) and len(raw) > 5:
+                rows = [{
+                    "datetime": pd.to_datetime(int(k[0]), unit="ms", utc=True),
+                    "open": float(k[1]), "high": float(k[2]),
+                    "low": float(k[3]), "close": float(k[4]),
+                    "volume": float(k[5]) if len(k) > 5 else 0.0,
+                } for k in raw]
+                df = _trim_weekend_candles(_clean_ohlc_df(pd.DataFrame(rows))).tail(limit).reset_index(drop=True)
+                if len(df) > 5:
+                    return df, ("Market Closed • Gold Close" if closed else "Gold Spot Live • XAUT/USD"), not closed, "XAUT"
+    except Exception as e:
+        print(f"[OKX] {e}")
+
+    return _fetch_yahoo_gold(interval, limit)
+
+
 def fetch_gold_data(interval: str = "5m") -> tuple[pd.DataFrame, str, bool, str]:
-    ttl = 45.0 if (TWELVE_DATA_KEY and not OANDA_API_KEY) else (8.0 if interval == "1m" else 15.0)
+    if _is_forex_weekend_utc():
+        ttl = 120.0
+    else:
+        ttl = 45.0 if (TWELVE_DATA_KEY and not OANDA_API_KEY) else (8.0 if interval == "1m" else 15.0)
     res = cache.get_or_fetch(f"gold_{interval}", ttl, lambda: _fetch_gold_raw(interval))
     if res is None:
         return pd.DataFrame(), "Reconnecting...", False, ""

@@ -1,37 +1,9 @@
 {
-  "wins": 6,
+  "wins": 7,
   "losses": 3,
-  "gross_win_pips": 529.9,
+  "gross_win_pips": 596.8,
   "gross_loss_pips": 137.6,
   "active": {
-    "5m": {
-      "tf": "5m",
-      "side": "BUY",
-      "grade": "A",
-      "confidence": 71,
-      "is_sniper": false,
-      "entry_state": "EXTENDED",
-      "filled": false,
-      "entry": 3636.16,
-      "sl": 3624.81,
-      "tp": 3650.28,
-      "open_kh": "28/11 01:03",
-      "ts": 1795802602
-    },
-    "15m": {
-      "tf": "15m",
-      "side": "BUY",
-      "grade": "B+",
-      "confidence": 59,
-      "is_sniper": false,
-      "entry_state": "PULLBACK",
-      "filled": false,
-      "entry": 3643.84,
-      "sl": 3622.52,
-      "tp": 3686.48,
-      "open_kh": "28/11 01:04",
-      "ts": 1795802683
-    },
     "1h": {
       "tf": "1h",
       "side": "BUY",
@@ -45,37 +17,27 @@
       "tp": 3716.82,
       "open_kh": "28/11 02:01",
       "ts": 1795806102
-    },
-    "4h": {
-      "tf": "4h",
-      "side": "BUY",
-      "grade": "A",
-      "confidence": 75,
-      "is_sniper": false,
-      "entry_state": "PULLBACK",
-      "filled": false,
-      "entry": 3613.34,
-      "sl": 3521.27,
-      "tp": 3797.48,
-      "open_kh": "28/11 01:04",
-      "ts": 1795802686
-    },
-    "1m": {
-      "tf": "1m",
-      "side": "BUY",
-      "grade": "A",
-      "confidence": 82,
-      "is_sniper": false,
-      "entry_state": "IN_ZONE",
-      "filled": true,
-      "entry": 3641.34,
-      "sl": 3637.65,
-      "tp": 3648.73,
-      "open_kh": "28/11 01:42",
-      "ts": 1795804958
     }
   },
   "recent": [
+    {
+      "tf": "1m",
+      "side": "BUY",
+      "grade": "A",
+      "is_sniper": false,
+      "entry_state": "IN_ZONE",
+      "entry": 3641.34,
+      "exit": 3648.73,
+      "sl": 3637.65,
+      "tp": 3648.73,
+      "pips": 66.9,
+      "usd": 6.69,
+      "result": "WIN",
+      "open_kh": "28/11 01:42",
+      "close_kh": "28/11 12:30",
+      "dur_min": 647,
+      "ts": 1795843835
+    },
     {
       "tf": "1m",
       "side": "BUY",

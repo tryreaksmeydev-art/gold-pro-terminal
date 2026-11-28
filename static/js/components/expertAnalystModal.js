@@ -6,11 +6,34 @@ import { makeResizable } from './draggable.js';
 
 const POLL_MS = 5000;
 
+function isForexWeekendUTC() {
+  const now = new Date();
+  const day = now.getUTCDay();
+  const hr = now.getUTCHours();
+  return day === 6 || (day === 5 && hr >= 22) || (day === 0 && hr < 22);
+}
+
+function getTimeUntilMarketOpenKm() {
+  const now = new Date();
+  const target = new Date(now.getTime());
+  const day = now.getUTCDay();
+  const daysToAdd = day === 5 ? 2 : (day === 6 ? 1 : 0);
+  target.setUTCDate(now.getUTCDate() + daysToAdd);
+  target.setUTCHours(22, 0, 0, 0);
+
+  const diffSec = Math.max(0, Math.floor((target.getTime() - now.getTime()) / 1000));
+  const hrs = Math.floor(diffSec / 3600);
+  const mins = Math.floor((diffSec % 3600) / 60);
+  const secs = diffSec % 60;
+  return `${String(hrs).padStart(2, '0')}ម៉ោង ${String(mins).padStart(2, '0')}នាទី ${String(secs).padStart(2, '0')}វិនាទី`;
+}
+
 class ExpertAnalystModal {
   constructor() {
     this.isOpen = false;
     this.isFullscreen = false;
     this.isFetching = false;
+    this.isReplaying = false;
     this.lastReport = null;
     this.lastPrice = null;
     this.prevPrice = null;
@@ -21,6 +44,7 @@ class ExpertAnalystModal {
     this.lastChangePct = 0;
     this.sparkPrices = [];
     this.auditLot = 0.01;
+    this.wasWeekend = isForexWeekendUTC();
 
     this.pollTimer = null;
     this.countdownTimer = null;
@@ -68,163 +92,174 @@ class ExpertAnalystModal {
     const stage = $('chartStage') || document.body;
     const win = document.createElement('div');
     win.id = 'expertAnalystWindow';
-    win.className = 'hidden absolute top-3 right-3 z-[38] w-[min(370px,calc(100%-16px))] flex flex-col rounded-2xl bg-[#070d1b]/95 backdrop-blur-2xl border border-amber-400/45 shadow-[0_24px_70px_rgba(0,0,0,.82),0_0_28px_rgba(250,204,21,.12)] overflow-hidden transition-shadow';
+    win.className = 'hidden absolute top-3 right-3 z-[38] w-[min(390px,calc(100%-16px))] flex flex-col rounded-2xl bg-[#070d1a]/96 backdrop-blur-2xl border border-amber-400/45 shadow-[0_24px_70px_rgba(0,0,0,.85)] overflow-hidden';
     win.style.maxHeight = 'calc(100% - 16px)';
 
     win.innerHTML = `
-      <!-- Sticky Draggable Header -->
-      <div id="eaDragHeader" class="shrink-0 flex items-center justify-between gap-2 px-3 py-2 bg-gradient-to-r from-[#131f3b] via-[#0c152b] to-[#131f3b] border-b border-amber-400/20 cursor-grab active:cursor-grabbing select-none" style="touch-action:none;">
+      <!-- 1. Sticky Draggable Header -->
+      <div id="eaDragHeader" class="shrink-0 flex items-center justify-between gap-2 px-3.5 py-2.5 bg-[#0d162b] border-b border-white/10 cursor-grab active:cursor-grabbing select-none" style="touch-action:none;">
         <div class="flex items-center gap-2 min-w-0">
-          <div class="w-6 h-6 rounded-lg bg-gradient-to-br from-amber-300 to-amber-500 text-[#070b13] flex items-center justify-center text-xs font-black shadow-[0_0_12px_rgba(250,204,21,.45)] shrink-0">🧠</div>
+          <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse shrink-0"></span>
           <div class="min-w-0">
-            <div class="text-[11px] sm:text-xs font-black bg-gradient-to-r from-amber-200 via-yellow-300 to-amber-400 bg-clip-text text-transparent truncate">អ្នកជំនាញវិភាគកម្រិតខ្ពស់</div>
-            <div class="text-[8.5px] text-cyan-300/80 font-bold tracking-wide truncate">5m Institutional • Self-Learning AI</div>
+            <div class="text-xs sm:text-sm font-black text-amber-300 truncate">អ្នកជំនាញវិភាគកម្រិតខ្ពស់ (5m)</div>
+            <div class="text-[9px] text-gray-400 truncate">V12 Institutional Truth • 7-Point Proof & Replay</div>
           </div>
         </div>
-        <div class="flex items-center gap-1 shrink-0 tabular-nums">
-          <span id="eaCandleTimer" class="px-1.5 py-0.5 rounded-md bg-sky-500/20 border border-sky-400/40 text-[9.5px] font-black text-sky-300">5m --:--</span>
-          <button id="eaBtnRefresh" type="button" title="វិភាគឡើងវិញ" class="w-6 h-6 rounded-lg bg-white/8 hover:bg-white/18 text-gray-200 text-[11px] font-black flex items-center justify-center active:scale-95 transition">↻</button>
-          <button id="eaBtnFullscreen" type="button" title="មើលពេញអេក្រង់" class="px-1.5 h-6 rounded-lg bg-amber-400/15 hover:bg-amber-400/30 border border-amber-400/40 text-amber-200 text-[9.5px] font-black flex items-center gap-1 active:scale-95 transition">
+        <div class="flex items-center gap-1.5 shrink-0 tabular-nums">
+          <span id="eaCandleTimer" class="px-2 py-0.5 rounded-md bg-sky-500/20 text-[10px] font-black text-sky-300">5m --:--</span>
+          <button id="eaBtnRefresh" type="button" title="វិភាគឡើងវិញ" class="w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 text-gray-200 text-[11px] font-black flex items-center justify-center active:scale-95">↻</button>
+          <button id="eaBtnFullscreen" type="button" title="មើលពេញអេក្រង់" class="px-2 h-6 rounded-lg bg-amber-400/20 hover:bg-amber-400/35 text-amber-200 text-[10px] font-black flex items-center gap-1 active:scale-95">
             <span id="eaFsIcon">⛶</span><span id="eaFsTxt" class="hidden sm:inline">ពេញ</span>
           </button>
-          <button id="eaBtnClose" type="button" title="បិទ" class="w-6 h-6 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 border border-rose-400/40 text-rose-200 text-[10px] font-black flex items-center justify-center active:scale-95 transition">✕</button>
+          <button id="eaBtnClose" type="button" title="បិទ" class="w-6 h-6 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 text-rose-200 text-[10px] font-black flex items-center justify-center active:scale-95">✕</button>
         </div>
       </div>
 
-      <!-- Live Price & Mini Chart Telemetry Strip -->
-      <div class="shrink-0 px-3 py-2 bg-[#050a14]/90 border-b border-white/10 flex items-center justify-between gap-2">
+      <!-- 2. Live Price & Sparkline Strip -->
+      <div class="shrink-0 px-3.5 py-2 bg-[#050a14] border-b border-white/10 flex items-center justify-between gap-2">
         <div class="min-w-0">
-          <div class="flex items-baseline gap-1.5 tabular-nums">
-            <span id="eaLiveBigPrice" class="text-base sm:text-lg font-black text-white tracking-tight">$--.--</span>
-            <span id="eaLiveChange" class="text-[9.5px] font-bold text-gray-400">--</span>
+          <div class="flex items-baseline gap-2 tabular-nums">
+            <span id="eaLiveBigPrice" class="text-lg sm:text-xl font-black text-white tracking-tight">$--.--</span>
+            <span id="eaLiveChange" class="text-[10px] font-bold text-gray-400">--</span>
           </div>
-          <div id="eaLiveBidAsk" class="text-[8.5px] text-gray-400 tabular-nums truncate">Bid -- • Ask -- • Spd --</div>
+          <div id="eaLiveBidAsk" class="text-[9.5px] text-gray-400 tabular-nums truncate">Bid -- • Ask -- • Spd --</div>
         </div>
-        <div class="flex items-center gap-2 shrink-0">
-          <svg id="eaMiniSpark" viewBox="0 0 110 30" class="w-[96px] sm:w-[110px] h-[28px] overflow-visible">
-            <defs>
-              <linearGradient id="eaSparkGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#facc15" stop-opacity="0.35"/>
-                <stop offset="100%" stop-color="#facc15" stop-opacity="0"/>
-              </linearGradient>
-            </defs>
-            <path id="eaSparkArea" d="" fill="url(#eaSparkGrad)"></path>
-            <path id="eaSparkLine" d="" fill="none" stroke="#facc15" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path>
-            <circle id="eaSparkDot" cx="0" cy="0" r="2.3" fill="#facc15" class="hidden"></circle>
-          </svg>
+        <svg id="eaMiniSpark" viewBox="0 0 110 30" class="w-[100px] sm:w-[116px] h-[28px] shrink-0 overflow-visible">
+          <defs>
+            <linearGradient id="eaSparkGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#facc15" stop-opacity="0.32"/>
+              <stop offset="100%" stop-color="#facc15" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <path id="eaSparkArea" d="" fill="url(#eaSparkGrad)"></path>
+          <path id="eaSparkLine" d="" fill="none" stroke="#facc15" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path>
+          <circle id="eaSparkDot" cx="0" cy="0" r="2.3" fill="#facc15" class="hidden"></circle>
+        </svg>
+      </div>
+
+      <!-- 3. Clean Executive Content Body -->
+      <div id="eaBody" class="flex-1 min-h-0 overflow-y-auto px-3.5 sm:px-5 py-3 space-y-3.5 text-[11.5px] sm:text-xs" style="-webkit-overflow-scrolling:touch; overscroll-behavior:contain; touch-action:pan-y;">
+        <div id="eaContentWrap" class="space-y-3.5">
+
+          <!-- Weekend Standby Panel (បង្ហាញជំនួសទិន្នន័យចាស់ពេលផ្សារបិទ) -->
+          <div id="eaWeekendStandby" class="hidden space-y-2.5 pb-3 border-b border-white/10">
+            <div class="rounded-xl bg-amber-500/12 border border-amber-400/40 p-3 text-center space-y-1">
+              <div class="text-sm font-black text-amber-300">⏸️ ទីផ្សារបិទចុងសប្តាហ៍ — រង់ចាំផ្សារបើកវិញ</div>
+              <div class="text-[11px] text-gray-200">ប្រព័ន្ធបានបង្កកតួលេខ Entry / SL / TP ចាស់ — នឹងបញ្ចូលទិន្នន័យថ្មីស្វ័យប្រវត្តិពេលផ្សារបើក!</div>
+              <div id="eaWkndCountdown" class="pt-1 text-xs font-black text-amber-200 tabular-nums">⏳ រង់ចាំផ្សារបើកវិញ (ច័ន្ទ 05:00 ព្រឹក)</div>
+            </div>
+            <div class="space-y-1.5 text-[11px] leading-snug">
+              <div class="text-gray-100">• ⏰ <b>បើកផ្សារវិញ៖</b> ថ្ងៃច័ន្ទ ម៉ោង <b class="text-amber-300">05:00 ព្រឹក</b> (ម៉ោងកម្ពុជា)</div>
+              <div class="text-emerald-200">• 🔥 <b>ម៉ោងមាសចំណេញធំថ្ងៃច័ន្ទ៖</b> <b class="text-emerald-300">14:00–17:30</b> (London) & <b class="text-emerald-300">19:20–23:00</b> (NY Overlap)</div>
+              <div class="text-rose-200">• ⚠️ <b>ប្រយ័ត្ន Monday Gap៖</b> ម៉ោង <b class="text-rose-300">05:00–06:30 ព្រឹក</b> Spread រីកធំ ងាយលោត Gap — ចាំទៀន 5m/15m ស្ថេរភាពសិន។</div>
+            </div>
+          </div>
+
+          <!-- Live Trading Sections (លាក់ស្វ័យប្រវត្តិពេលផ្សារបិទ បើកវិញភ្លាមពេលផ្សារបើក) -->
+          <div id="eaLiveSections" class="space-y-3.5">
+            <!-- A. Blunt Truth Verdict -->
+            <div class="space-y-1.5 pb-3 border-b border-white/10">
+              <div class="flex items-center justify-between gap-2 tabular-nums">
+                <span id="eaGradeBadge" class="text-[10.5px] font-black uppercase tracking-wide text-amber-300">5m AI • --%</span>
+                <span id="eaLivePnlBadge" class="text-[11px] font-black text-sky-300">READY</span>
+              </div>
+              <div id="eaVerdictTitle" class="text-sm sm:text-base font-black text-amber-300 leading-snug">⏳ កំពុងវិភាគទិន្នន័យស្ថាប័ន 5m...</div>
+              <div id="eaVerdictSub" class="text-[11px] text-gray-200 leading-relaxed">កំពុងផ្ទៀងផ្ទាត់ 7-Point Checklist, ម៉ោងមាស និងខួរក្បាលរៀនពីកំហុស</div>
+              <div class="w-full h-1.5 rounded-full bg-white/10 overflow-hidden mt-1">
+                <div id="eaConfBar" class="h-full bg-gradient-to-r from-amber-400 to-emerald-400 transition-all duration-300" style="width:45%"></div>
+              </div>
+              <div id="eaPrepBanner" class="hidden pt-1 text-[11px] font-black text-amber-300 animate-pulse"></div>
+            </div>
+
+            <!-- B. 7-Point Transparency Checklist -->
+            <div class="space-y-1.5 pb-3 border-b border-white/10">
+              <div class="flex items-center justify-between gap-2 text-[10.5px]">
+                <span class="font-black text-emerald-300">✅ ផ្ទៀងផ្ទាត់តម្លាភាព ៧ កត្តា</span>
+                <span id="eaCheckScore" class="font-black text-amber-300 tabular-nums">--/7</span>
+              </div>
+              <div id="eaChecklistRows" class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[10.5px] leading-snug tabular-nums"></div>
+            </div>
+
+            <!-- C. Cambodia Killzone Timing & Market Truth -->
+            <div class="space-y-1 pb-3 border-b border-white/10">
+              <div class="flex items-center justify-between gap-2 text-[10.5px]">
+                <span class="font-black text-cyan-300">⏰ ម៉ោងជួញដូរកម្ពុជា & ការពិតទីផ្សារ</span>
+                <span id="eaKzProb" class="font-black text-amber-300 tabular-nums">--</span>
+              </div>
+              <div id="eaKzLine" class="font-bold text-white leading-snug">--</div>
+              <div id="eaKzTruth" class="text-[11px] text-gray-300 leading-snug">--</div>
+              <div id="eaRegimeLine" class="text-[10.5px] text-sky-300 font-semibold leading-snug">--</div>
+              <div id="eaTrapList" class="hidden pt-1 space-y-0.5 text-[10.5px] font-bold text-rose-300"></div>
+            </div>
+
+            <!-- D. Execution Numbers -->
+            <div class="space-y-2 pb-3 border-b border-white/10">
+              <div class="flex items-center justify-between gap-2 text-[10.5px]">
+                <span class="font-black text-amber-300">🎯 តួលេខចូលផ្សារ (ចុចលើលេខដើម្បី Copy ចូល MT5)</span>
+                <span id="eaRrBadge" class="font-black text-emerald-300 tabular-nums">R:R --</span>
+              </div>
+              <div id="eaCopyGrid" class="flex flex-wrap items-center gap-x-4 gap-y-2 tabular-nums">
+                <button type="button" data-ea-copy="entry" class="text-left hover:opacity-80 active:scale-95 transition">
+                  <div class="text-[9.5px] text-gray-400 font-bold">ENTRY (ចូល)</div>
+                  <div id="eaValEntry" class="text-sm sm:text-base font-black text-amber-300">--</div>
+                </button>
+                <button type="button" data-ea-copy="sl" class="text-left hover:opacity-80 active:scale-95 transition">
+                  <div class="text-[9.5px] text-gray-400 font-bold">STOP LOSS (ឈប់)</div>
+                  <div id="eaValSl" class="text-sm sm:text-base font-black text-rose-400">--</div>
+                </button>
+                <button type="button" data-ea-copy="be" class="text-left hover:opacity-80 active:scale-95 transition">
+                  <div class="text-[9.5px] text-gray-400 font-bold">រំកិល BE (ការពារ)</div>
+                  <div id="eaValBe" class="text-sm sm:text-base font-black text-sky-300">--</div>
+                </button>
+                <button type="button" data-ea-copy="tp1" class="text-left hover:opacity-80 active:scale-95 transition">
+                  <div class="text-[9.5px] text-gray-400 font-bold">TP1 (កាត់ 50%)</div>
+                  <div id="eaValTp1" class="text-sm sm:text-base font-black text-emerald-400">--</div>
+                </button>
+              </div>
+              <div class="text-[10.5px] text-gray-300 tabular-nums leading-snug">
+                Trailing Lock: <b id="eaValTrail" class="text-amber-300">--</b> • TP2: <b id="eaValTp2" class="text-emerald-300">--</b> • <span id="eaProjUsd" class="text-cyan-200 font-bold">--</span>
+              </div>
+              <div id="eaRiskLotLine" class="text-[10.5px] font-bold text-amber-200/95 tabular-nums">--</div>
+            </div>
+
+            <!-- E. Clear 5-Step Decision Plan -->
+            <div class="space-y-1.5 pb-3 border-b border-white/10 leading-snug">
+              <div class="text-[10.5px] font-black text-emerald-300">📌 ផែនការសម្រេចចិត្តច្បាស់ៗ (ចូល • ការពារចំណេញ • ឈប់)</div>
+              <div id="eaRowTrend" class="text-gray-200">• --</div>
+              <div id="eaRowEntry" class="text-emerald-300 font-bold">• --</div>
+              <div id="eaRowAvoid" class="text-rose-300 font-semibold">• --</div>
+              <div id="eaRowProfitStop" class="text-amber-200 font-bold">• --</div>
+              <div id="eaRowLossStop" class="text-rose-400 font-black">• --</div>
+            </div>
+          </div>
+
+          <!-- F. 5-Day Auto-Replay Backtest & Self-Learning Brain (ប្រើបានគ្រប់ពេល ទាំងថ្ងៃបិទផ្សារ) -->
+          <div class="space-y-2 text-[10.5px] leading-snug">
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-black text-violet-300">🧬 ភស្តុតាងតេស្ត ៥ ថ្ងៃ & ខួរក្បាលរៀនពីកំហុស</span>
+              <span id="eaBrainIq" class="font-black text-violet-200 tabular-nums">IQ --</span>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+              <button id="eaBtnReplay5d" type="button" class="px-3 py-1.5 rounded-xl bg-gradient-to-r from-violet-500 to-cyan-500 hover:brightness-110 text-white text-[10.5px] font-black active:scale-95 transition">
+                🧪 រត់តេស្ត ៥ ថ្ងៃចុងក្រោយ (Backtest & រៀន)
+              </button>
+              <span id="eaReplayStatus" class="text-[10px] text-gray-400"></span>
+            </div>
+
+            <div id="eaReplayResult" class="hidden space-y-1 py-1.5 border-y border-white/10 tabular-nums"></div>
+
+            <div id="eaBackendSummary" class="text-gray-300 tabular-nums">--</div>
+            <div id="eaReasonsList" class="space-y-0.5 text-cyan-200/90"></div>
+            <div id="eaPatternStatus" class="font-bold text-gray-100 pt-1">--</div>
+            <div id="eaMemLine" class="text-gray-300 tabular-nums">--</div>
+            <div id="eaLessonsList" class="space-y-0.5 text-[10px] text-gray-300"></div>
+          </div>
+
         </div>
       </div>
 
-      <!-- Scrollable Content Body -->
-      <div id="eaBody" class="flex-1 min-h-0 overflow-y-auto p-2.5 sm:p-3 space-y-2.5 text-[10.5px]" style="-webkit-overflow-scrolling:touch; overscroll-behavior:contain; touch-action:pan-y;">
-        <div id="eaGridWrap" class="space-y-2.5">
-          <!-- Column 1 (Verdict + Plan + 5-Rule Guidance) -->
-          <div class="space-y-2.5">
-            <div id="eaVerdictCard" class="rounded-xl border border-amber-400/35 bg-gradient-to-b from-white/[.04] to-black/40 p-2.5 space-y-1.5 text-center">
-              <div class="flex items-center justify-between text-[9px] tabular-nums">
-                <span id="eaGradeBadge" class="px-2 py-0.5 rounded-md bg-amber-400/20 text-amber-300 font-black border border-amber-400/35">5m AI</span>
-                <span id="eaLivePnlBadge" class="font-black text-sky-300">READY</span>
-              </div>
-              <div id="eaVerdictTitle" class="text-xs sm:text-sm font-black text-amber-300 leading-snug">⏳ កំពុងវិភាគទិន្នន័យស្ថាប័ន 5m...</div>
-              <div id="eaVerdictSub" class="text-[10px] text-gray-200 leading-snug">កំពុងផ្ទៀងផ្ទាត់ Premium/Discount, OB, VWAP, SMT និងខួរក្បាលរៀនពីកំហុស</div>
-              <div class="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
-                <div id="eaConfBar" class="h-full bg-gradient-to-r from-amber-400 to-emerald-400 transition-all duration-300" style="width:50%"></div>
-              </div>
-              <div id="eaPrepBanner" class="hidden rounded-lg bg-amber-500/20 border border-amber-400/50 px-2 py-1 text-[9.5px] font-black text-amber-200"></div>
-            </div>
-
-            <!-- One-Click Copy Execution Plan (MT5) -->
-            <div class="rounded-xl bg-[#050b18] border border-white/10 p-2.5 space-y-2">
-              <div class="flex items-center justify-between text-[9.5px]">
-                <span class="font-black text-cyan-300">ផែនការចូល & ការពារ (ចុច Copy ចូល MT5)</span>
-                <span id="eaRrBadge" class="font-black text-amber-300 tabular-nums">R:R --</span>
-              </div>
-              <div id="eaCopyGrid" class="grid grid-cols-2 gap-1.5 tabular-nums">
-                <button type="button" data-ea-copy="entry" class="rounded-lg bg-amber-400/12 hover:bg-amber-400/22 border border-amber-400/35 p-1.5 text-left active:scale-95 transition">
-                  <div class="text-[8px] text-amber-200/80 font-bold">📋 ENTRY (ចូល)</div>
-                  <div id="eaValEntry" class="text-xs font-black text-amber-300">--</div>
-                </button>
-                <button type="button" data-ea-copy="sl" class="rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-400/40 p-1.5 text-left active:scale-95 transition">
-                  <div class="text-[8px] text-rose-200/80 font-bold">📋 STOP LOSS (ឈប់)</div>
-                  <div id="eaValSl" class="text-xs font-black text-rose-300">--</div>
-                </button>
-                <button type="button" data-ea-copy="be" class="rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/40 p-1.5 text-left active:scale-95 transition">
-                  <div class="text-[8px] text-sky-200/80 font-bold">📋 រំកិល BE (ការពារ)</div>
-                  <div id="eaValBe" class="text-xs font-black text-sky-300">--</div>
-                </button>
-                <button type="button" data-ea-copy="tp1" class="rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/40 p-1.5 text-left active:scale-95 transition">
-                  <div class="text-[8px] text-emerald-200/80 font-bold">📋 TP1 (កាត់ចំណេញ)</div>
-                  <div id="eaValTp1" class="text-xs font-black text-emerald-300">--</div>
-                </button>
-              </div>
-              <div class="flex items-center justify-between text-[9px] text-gray-300 pt-1 border-t border-white/10 tabular-nums">
-                <span>Trail៖ <b id="eaValTrail" class="text-amber-300">--</b></span>
-                <span>TP2៖ <b id="eaValTp2" class="text-emerald-300">--</b></span>
-                <span id="eaProjUsd" class="text-cyan-200 font-bold">--</span>
-              </div>
-            </div>
-
-            <!-- 5-Rule Clear Guidance -->
-            <div class="space-y-1.5">
-              <div class="flex items-start gap-2 rounded-xl bg-white/[.035] border border-white/10 p-2">
-                <span class="w-5 h-5 rounded-lg bg-sky-500/20 border border-sky-400/40 text-sky-300 flex items-center justify-center font-black shrink-0">↗</span>
-                <div id="eaRowTrend" class="text-gray-100 font-semibold leading-snug">--</div>
-              </div>
-              <div class="flex items-start gap-2 rounded-xl bg-emerald-500/10 border border-emerald-400/35 p-2">
-                <span class="w-5 h-5 rounded-lg bg-emerald-500/25 border border-emerald-400/50 text-emerald-300 flex items-center justify-center font-black shrink-0">◎</span>
-                <div id="eaRowEntry" class="text-emerald-100 font-bold leading-snug">--</div>
-              </div>
-              <div class="flex items-start gap-2 rounded-xl bg-rose-500/10 border border-rose-400/35 p-2">
-                <span class="w-5 h-5 rounded-lg bg-rose-500/25 border border-rose-400/50 text-rose-300 flex items-center justify-center font-black shrink-0">⊘</span>
-                <div id="eaRowAvoid" class="text-rose-100 font-semibold leading-snug">--</div>
-              </div>
-              <div class="flex items-start gap-2 rounded-xl bg-amber-500/12 border border-amber-400/45 p-2">
-                <span class="w-5 h-5 rounded-lg bg-amber-500/25 border border-amber-400/55 text-amber-200 flex items-center justify-center font-black shrink-0">🛡️</span>
-                <div id="eaRowProfitStop" class="text-amber-100 font-bold leading-snug">--</div>
-              </div>
-              <div class="flex items-start gap-2 rounded-xl bg-rose-950/60 border border-rose-500/50 p-2">
-                <span class="w-5 h-5 rounded-lg bg-rose-500/30 border border-rose-400/60 text-rose-200 flex items-center justify-center font-black shrink-0">!</span>
-                <div id="eaRowLossStop" class="text-rose-100 font-bold leading-snug">--</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Column 2 (Institutional Matrix + Self-Learning Brain) -->
-          <div class="space-y-2.5">
-            <div class="rounded-xl bg-[#050b18] border border-cyan-400/25 p-2.5 space-y-2">
-              <div class="flex items-center justify-between text-[9.5px]">
-                <span class="font-black text-cyan-300">ទិន្នន័យស្ថាប័នកម្រិត Pro (8 កត្តា)</span>
-                <span id="eaSweepBadge" class="text-[8.5px] font-bold text-gray-300 truncate max-w-[55%]">--</span>
-              </div>
-              <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-center text-[8.5px] tabular-nums">
-                <div class="rounded-lg bg-black/50 p-1.5"><div class="text-gray-400">តំបន់ P/D</div><div id="eaMatPd" class="font-black text-amber-300">--</div></div>
-                <div class="rounded-lg bg-black/50 p-1.5"><div class="text-gray-400">VWAP / POC</div><div id="eaMatVwap" class="font-black text-purple-300">--</div></div>
-                <div class="rounded-lg bg-black/50 p-1.5"><div class="text-gray-400">CVD លុយធំ</div><div id="eaMatCvd" class="font-black text-sky-300">--</div></div>
-                <div class="rounded-lg bg-black/50 p-1.5"><div class="text-gray-400">SMT / MTF</div><div id="eaMatSmt" class="font-black text-emerald-300">--</div></div>
-              </div>
-              <div id="eaReasonsList" class="space-y-1 text-[9.5px] text-gray-200"></div>
-            </div>
-
-            <!-- Self-Learning Brain -->
-            <div class="rounded-xl bg-gradient-to-br from-[#0f1a33] to-[#070e1f] border border-violet-400/35 p-2.5 space-y-2">
-              <div class="flex items-center justify-between gap-2">
-                <span class="font-black text-violet-300 text-[10px]">🧬 ខួរក្បាលរៀនពីកំហុស & កែលម្អខ្លួនឯង</span>
-                <span id="eaBrainIq" class="px-2 py-0.5 rounded-md bg-violet-500/25 border border-violet-400/45 text-[9px] font-black text-violet-200 tabular-nums">IQ --</span>
-              </div>
-              <div id="eaPatternStatus" class="rounded-lg bg-white/[.04] border border-white/10 px-2 py-1 text-[9.5px] font-bold text-gray-100">--</div>
-              <div class="grid grid-cols-4 gap-1 text-center text-[8.5px] tabular-nums">
-                <div class="rounded bg-black/45 p-1"><div class="text-gray-400">ឈ្នះ/ខាត</div><div id="eaMemWl" class="font-black text-emerald-300">0 / 0</div></div>
-                <div class="rounded bg-black/45 p-1"><div class="text-gray-400">អត្រាឈ្នះ</div><div id="eaMemWr" class="font-black text-amber-300">--</div></div>
-                <div class="rounded bg-black/45 p-1"><div class="text-gray-400">ប្លុកកំហុស</div><div id="eaMemBlocked" class="font-black text-rose-300">0</div></div>
-                <div class="rounded bg-black/45 p-1"><div class="text-gray-400">ទម្រង់រៀន</div><div id="eaMemPats" class="font-black text-cyan-300">0</div></div>
-              </div>
-              <div id="eaLessonsList" class="space-y-1 text-[9px]"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Resize Handle (Bottom-Right) -->
+      <!-- Resize Handle -->
       <div id="eaResizeHandle" title="ទាញពង្រីកទំហំ" class="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize flex items-end justify-end p-0.5 text-amber-300/60 hover:text-amber-300 select-none">
         <svg class="w-2.5 h-2.5" viewBox="0 0 10 10" fill="currentColor"><path d="M9 1v8H1l8-8z"/></svg>
       </div>
@@ -235,7 +270,7 @@ class ExpertAnalystModal {
     this.bodyEl = $('eaBody');
 
     this._initSmartDrag(win, stage);
-    makeResizable(win, $('eaResizeHandle'), stage, { minWidth: 280, maxWidth: 680 });
+    makeResizable(win, $('eaResizeHandle'), stage, { minWidth: 300, maxWidth: 720 });
 
     $('eaBtnClose')?.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -249,12 +284,68 @@ class ExpertAnalystModal {
       e.stopPropagation();
       this.toggleFullscreen();
     });
+    $('eaBtnReplay5d')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._run5DayReplay();
+    });
     $('eaCopyGrid')?.addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-ea-copy]');
       if (!btn) return;
       e.stopPropagation();
       this._copyField(btn.dataset.eaCopy, btn);
     });
+  }
+
+  async _run5DayReplay() {
+    if (this.isReplaying) return;
+    this.isReplaying = true;
+
+    const btn = $('eaBtnReplay5d');
+    const stEl = $('eaReplayStatus');
+    const resEl = $('eaReplayResult');
+    if (btn) btn.disabled = true;
+    if (stEl) stEl.textContent = 'កំពុងគណនាលើទៀន 5m ពិត...';
+
+    try {
+      const res = await fetch(`/api/expert-replay?train=1&t=${Date.now()}`, { cache: 'no-store' });
+      const d = await res.json();
+      if (d?.error) {
+        if (stEl) stEl.textContent = d.error;
+        return;
+      }
+
+      if (stEl) {
+        stEl.textContent = d.trained_memory ? '✓ រត់តេស្ត និងបញ្ចូលមេរៀនរួចរាល់!' : '✓ រត់តេស្តរួចរាល់!';
+        stEl.className = 'text-[10px] font-bold text-emerald-300';
+      }
+
+      if (resEl) {
+        const netCol = d.net_pips >= 0 ? 'text-emerald-400' : 'text-rose-400';
+        const tradesHtml = (d.recent_trades || []).map((t) => {
+          const c = t.is_win ? 'text-emerald-300' : 'text-rose-300';
+          return `<div class="${c} text-[10px]">• [${escHtml(t.time_kh)}] ${escHtml(t.side)} $${Number(t.entry).toFixed(1)} → $${Number(t.exit).toFixed(1)} (${t.pips >= 0 ? '+' : ''}${t.pips}p • ${escHtml(t.outcome)})</div>`;
+        }).join('');
+
+        resEl.innerHTML = `
+          <div class="font-black text-cyan-300">📊 លទ្ធផលពិត៖ ${escHtml(d.source_km || '5 ថ្ងៃ')} (ដក Spread+Comm ${d.cost_pips}p)</div>
+          <div class="font-bold text-white">
+            សរុប ${d.total_trades} ជើង៖ ឈ្នះ <b class="text-emerald-400">${d.wins}</b> / ខាត <b class="text-rose-400">${d.losses}</b> • Win Rate <b class="text-amber-300">${d.win_rate}%</b> • PF <b class="text-cyan-300">${d.profit_factor}</b>
+          </div>
+          <div class="font-bold ${netCol}">
+            លទ្ធផលសុទ្ធ៖ ${d.net_pips >= 0 ? '+' : ''}${d.net_pips} pips (Lot 0.01: ${d.net_usd_001 >= 0 ? '+' : ''}$${d.net_usd_001}) • Max DD -${d.max_dd_pips}p • ការពារអន្ទាក់ ${d.traps_avoided} ដង
+          </div>
+          ${tradesHtml}
+        `;
+        resEl.classList.remove('hidden');
+      }
+
+      this._fetchReport();
+    } catch {
+      if (stEl) stEl.textContent = 'បរាជ័យក្នុងការរត់តេស្ត សូមសាកម្តងទៀត';
+    } finally {
+      this.isReplaying = false;
+      if (btn) btn.disabled = false;
+    }
   }
 
   _initSmartDrag(el, stage) {
@@ -370,7 +461,7 @@ class ExpertAnalystModal {
     this.isFullscreen = next;
 
     const stage = $('chartStage') || document.body;
-    const grid = $('eaGridWrap');
+    const wrap = $('eaContentWrap');
     const resizeEl = $('eaResizeHandle');
     const fsIcon = $('eaFsIcon');
     const fsTxt = $('eaFsTxt');
@@ -390,13 +481,13 @@ class ExpertAnalystModal {
       this.winEl.style.right = '';
       this.winEl.style.width = '';
       this.winEl.style.maxHeight = '100dvh';
-      if (grid) grid.className = 'max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-3';
+      if (wrap) wrap.className = 'max-w-3xl mx-auto space-y-4';
       resizeEl?.classList.add('hidden');
       if (fsIcon) fsIcon.textContent = '❐';
       if (fsTxt) fsTxt.textContent = 'បង្រួម';
     } else {
       stage.appendChild(this.winEl);
-      this.winEl.className = 'absolute top-3 right-3 z-[38] w-[min(370px,calc(100%-16px))] flex flex-col rounded-2xl bg-[#070d1b]/95 backdrop-blur-2xl border border-amber-400/45 shadow-[0_24px_70px_rgba(0,0,0,.82),0_0_28px_rgba(250,204,21,.12)] overflow-hidden transition-shadow';
+      this.winEl.className = 'absolute top-3 right-3 z-[38] w-[min(390px,calc(100%-16px))] flex flex-col rounded-2xl bg-[#070d1a]/96 backdrop-blur-2xl border border-amber-400/45 shadow-[0_24px_70px_rgba(0,0,0,.85)] overflow-hidden';
       if (this.savedRect) {
         this.winEl.style.left = this.savedRect.left || '';
         this.winEl.style.top = this.savedRect.top || '';
@@ -404,7 +495,7 @@ class ExpertAnalystModal {
         this.winEl.style.width = this.savedRect.width || '';
         this.winEl.style.maxHeight = this.savedRect.maxHeight || 'calc(100% - 16px)';
       }
-      if (grid) grid.className = 'space-y-2.5';
+      if (wrap) wrap.className = 'space-y-3.5';
       resizeEl?.classList.remove('hidden');
       if (fsIcon) fsIcon.textContent = '⛶';
       if (fsTxt) fsTxt.textContent = 'ពេញ';
@@ -430,7 +521,7 @@ class ExpertAnalystModal {
       if (toNum(change) !== null) this.lastChange = Number(change);
       if (toNum(changePct) !== null) this.lastChangePct = Number(changePct);
 
-      if (!this.sparkPrices.length || Math.abs(this.sparkPrices[this.sparkPrices.length - 1] - price) >= 0.01) {
+      if (!isForexWeekendUTC() && (!this.sparkPrices.length || Math.abs(this.sparkPrices[this.sparkPrices.length - 1] - price) >= 0.01)) {
         this.sparkPrices.push(price);
         if (this.sparkPrices.length > 34) this.sparkPrices.shift();
       }
@@ -442,10 +533,9 @@ class ExpertAnalystModal {
     });
 
     bus.on('chart:resized', () => this._clampPosition());
-
     bus.on('audit:lotChanged', ({ lot }) => {
       this.auditLot = Number(lot) || 0.01;
-      if (this.isOpen && this.lastReport) this._updateProjectedUsd(this.lastReport);
+      if (this.isOpen && this.lastReport && !isForexWeekendUTC()) this._updateProjectedUsd(this.lastReport);
     });
 
     window.addEventListener('resize', () => this._clampPosition(), { passive: true });
@@ -471,16 +561,14 @@ class ExpertAnalystModal {
     const h = 28;
     const pad = 2;
 
-    const coords = pts.map((v, i) => {
-      const x = (i / (pts.length - 1)) * w;
-      const y = pad + (1 - (v - min) / span) * (h - pad * 2);
-      return [x, y];
-    });
+    const coords = pts.map((v, i) => [
+      (i / (pts.length - 1)) * w,
+      pad + (1 - (v - min) / span) * (h - pad * 2),
+    ]);
 
     const dLine = coords.map((c, i) => `${i === 0 ? 'M' : 'L'}${c[0].toFixed(1)},${c[1].toFixed(1)}`).join(' ');
     const dArea = `${dLine} L${w},${h} L0,${h} Z`;
-    const isUp = pts[pts.length - 1] >= pts[0];
-    const stroke = isUp ? '#34d399' : '#fb7185';
+    const stroke = pts[pts.length - 1] >= pts[0] ? '#34d399' : '#fb7185';
 
     lineEl.setAttribute('d', dLine);
     lineEl.setAttribute('stroke', stroke);
@@ -519,7 +607,9 @@ class ExpertAnalystModal {
 
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = setInterval(() => {
-      if (this.isOpen && !document.hidden) this._fetchReport();
+      if (this.isOpen && !document.hidden && !isForexWeekendUTC()) {
+        this._fetchReport();
+      }
     }, POLL_MS);
   }
 
@@ -540,15 +630,34 @@ class ExpertAnalystModal {
   _startCountdown() {
     if (this.countdownTimer) clearInterval(this.countdownTimer);
     const updateTimer = () => {
+      const wknd = isForexWeekendUTC();
+      const el = $('eaCandleTimer');
+
+      if (wknd) {
+        if (el) {
+          el.textContent = 'ផ្សារបិទ';
+          el.className = 'px-2 py-0.5 rounded-md bg-rose-500/25 text-[10px] font-black text-rose-200';
+        }
+        if ($('eaWkndCountdown')) {
+          $('eaWkndCountdown').textContent = `⏳ នៅសល់ ${getTimeUntilMarketOpenKm()} ទៀតផ្សារបើកវិញ (ច័ន្ទ 05:00 ព្រឹក)`;
+        }
+        this.wasWeekend = true;
+        return;
+      }
+
+      if (this.wasWeekend && !wknd) {
+        this.wasWeekend = false;
+        this._fetchReport();
+      }
+
       const rem = 300 - (Math.floor(Date.now() / 1000) % 300);
       const m = Math.floor(rem / 60);
       const s = rem % 60;
-      const el = $('eaCandleTimer');
       if (el) {
         el.textContent = `5m ${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
         el.className = rem <= 15
-          ? 'px-1.5 py-0.5 rounded-md bg-rose-500/30 border border-rose-400/60 text-[9.5px] font-black text-rose-200 animate-pulse'
-          : 'px-1.5 py-0.5 rounded-md bg-sky-500/20 border border-sky-400/40 text-[9.5px] font-black text-sky-300';
+          ? 'px-2 py-0.5 rounded-md bg-rose-500/30 text-[10px] font-black text-rose-200 animate-pulse'
+          : 'px-2 py-0.5 rounded-md bg-sky-500/20 text-[10px] font-black text-sky-300';
       }
 
       const prep = $('eaPrepBanner');
@@ -589,100 +698,137 @@ class ExpertAnalystModal {
   }
 
   _renderReport(r) {
-    const plan = r.plan || {};
-    const g = r.guidance || {};
-    const inst = r.institutional || {};
+    const wknd = isForexWeekendUTC();
     const pm = r.pattern_memory || {};
     const lb = r.learning_brain || {};
 
-    const card = $('eaVerdictCard');
-    const title = $('eaVerdictTitle');
-    const badge = $('eaGradeBadge');
-    const bar = $('eaConfBar');
+    // Toggle Weekend Standby vs Live Trading Sections
+    $('eaWeekendStandby')?.classList.toggle('hidden', !wknd);
+    $('eaLiveSections')?.classList.toggle('hidden', wknd);
 
-    if (card && title && badge) {
-      if (r.verdict_code === 'BLOCKED') {
-        card.className = 'rounded-xl border-2 border-rose-500/70 bg-rose-950/55 p-2.5 space-y-1.5 text-center';
-        title.className = 'text-xs sm:text-sm font-black text-rose-300 leading-snug';
-        badge.className = 'px-2 py-0.5 rounded-md bg-rose-500/30 text-rose-100 font-black border border-rose-400/50';
-      } else if (r.can_execute && r.bias === 'BUY') {
-        card.className = 'rounded-xl border-2 border-emerald-400/70 bg-emerald-950/50 p-2.5 space-y-1.5 text-center';
-        title.className = 'text-xs sm:text-sm font-black text-emerald-300 leading-snug';
-        badge.className = 'px-2 py-0.5 rounded-md bg-emerald-500/30 text-emerald-100 font-black border border-emerald-400/50';
-      } else if (r.can_execute && r.bias === 'SELL') {
-        card.className = 'rounded-xl border-2 border-rose-400/70 bg-rose-950/50 p-2.5 space-y-1.5 text-center';
-        title.className = 'text-xs sm:text-sm font-black text-rose-300 leading-snug';
-        badge.className = 'px-2 py-0.5 rounded-md bg-rose-500/30 text-rose-100 font-black border border-rose-400/50';
-      } else {
-        card.className = 'rounded-xl border border-amber-400/35 bg-gradient-to-b from-white/[.04] to-black/40 p-2.5 space-y-1.5 text-center';
-        title.className = 'text-xs sm:text-sm font-black text-amber-300 leading-snug';
-        badge.className = 'px-2 py-0.5 rounded-md bg-amber-400/20 text-amber-300 font-black border border-amber-400/35';
+    if (!wknd) {
+      const plan = r.plan || {};
+      const g = r.guidance || {};
+      const kz = r.killzone || {};
+      const reg = r.regime || {};
+      const rg = r.risk_guide || {};
+      const cl = r.checklist || {};
+
+      const title = $('eaVerdictTitle');
+      const badge = $('eaGradeBadge');
+      const bar = $('eaConfBar');
+      if (title && badge) {
+        if (r.verdict_code === 'BLOCKED') {
+          title.className = 'text-sm sm:text-base font-black text-rose-400 leading-snug';
+          badge.className = 'text-[10.5px] font-black uppercase tracking-wide text-rose-400';
+        } else if (r.can_execute && r.bias === 'BUY') {
+          title.className = 'text-sm sm:text-base font-black text-emerald-400 leading-snug';
+          badge.className = 'text-[10.5px] font-black uppercase tracking-wide text-emerald-400';
+        } else if (r.can_execute && r.bias === 'SELL') {
+          title.className = 'text-sm sm:text-base font-black text-rose-400 leading-snug';
+          badge.className = 'text-[10.5px] font-black uppercase tracking-wide text-rose-400';
+        } else {
+          title.className = 'text-sm sm:text-base font-black text-amber-300 leading-snug';
+          badge.className = 'text-[10.5px] font-black uppercase tracking-wide text-amber-300';
+        }
+        badge.textContent = `${r.grade || '5m'} • ទំនុកចិត្ត ${r.confidence ?? 0}%`;
+        title.textContent = r.verdict_km || '--';
       }
-      badge.textContent = `${r.grade || '5m'} • ${r.confidence ?? 0}%`;
-      title.textContent = r.verdict_km || '--';
+      if (bar) bar.style.width = `${Math.max(10, Math.min(100, Number(r.confidence || 0)))}%`;
+      if ($('eaVerdictSub')) $('eaVerdictSub').textContent = r.sub_km || '--';
+
+      const scEl = $('eaCheckScore');
+      if (scEl) {
+        scEl.textContent = cl.verdict_km || `${cl.passed ?? 0}/7`;
+        scEl.className = `font-black tabular-nums ${(cl.passed ?? 0) >= 6 ? 'text-emerald-400' : (cl.passed ?? 0) >= 4 ? 'text-amber-300' : 'text-rose-400'}`;
+      }
+      const clRows = $('eaChecklistRows');
+      if (clRows && Array.isArray(cl.items)) {
+        clRows.innerHTML = cl.items.map((it) => {
+          const icon = it.ok ? '<span class="text-emerald-400 font-black">✓</span>' : '<span class="text-rose-400 font-black">✕</span>';
+          const valCol = it.ok ? 'text-emerald-300' : 'text-rose-300';
+          return `<div class="flex items-center justify-between gap-2">
+            <span class="text-gray-200 truncate">${icon} ${escHtml(it.label)}</span>
+            <span class="${valCol} font-bold shrink-0">${escHtml(it.val)}</span>
+          </div>`;
+        }).join('');
+      }
+
+      if ($('eaKzProb')) {
+        $('eaKzProb').textContent = `ឱកាសម៉ោងនេះ ${kz.prob_pct ?? 0}% • ម៉ោង ${kz.time_kh || '--'} (កម្ពុជា)`;
+        $('eaKzProb').className = `font-black tabular-nums ${kz.is_golden ? 'text-emerald-400' : kz.is_dead ? 'text-rose-400' : 'text-amber-300'}`;
+      }
+      if ($('eaKzLine')) $('eaKzLine').textContent = `${kz.name_km || '--'} — ${kz.next_golden_km || ''}`;
+      if ($('eaKzTruth')) $('eaKzTruth').textContent = kz.truth_km || '--';
+      if ($('eaRegimeLine')) $('eaRegimeLine').textContent = `ស្ថានភាពក្រាហ្វិក៖ ${reg.km || '--'}`;
+
+      const trapEl = $('eaTrapList');
+      if (trapEl) {
+        const traps = Array.isArray(r.traps) ? r.traps : [];
+        if (traps.length) {
+          trapEl.innerHTML = traps.map((t) => `<div>⚠️ អន្ទាក់៖ ${escHtml(t)}</div>`).join('');
+          trapEl.classList.remove('hidden');
+        } else {
+          trapEl.classList.add('hidden');
+        }
+      }
+
+      if ($('eaRrBadge')) $('eaRrBadge').textContent = `R:R ${plan.rr || '--'}`;
+      if ($('eaValEntry')) $('eaValEntry').textContent = plan.entry ? `$${Number(plan.entry).toFixed(2)}` : '--';
+      if ($('eaValSl')) $('eaValSl').textContent = plan.sl ? `$${Number(plan.sl).toFixed(2)}` : '--';
+      if ($('eaValBe')) $('eaValBe').textContent = plan.be_trigger ? `$${Number(plan.be_trigger).toFixed(2)}` : '--';
+      if ($('eaValTp1')) $('eaValTp1').textContent = plan.tp1 ? `$${Number(plan.tp1).toFixed(2)}` : '--';
+      if ($('eaValTrail')) $('eaValTrail').textContent = plan.trailing_stop ? `$${Number(plan.trailing_stop).toFixed(2)}` : '--';
+      if ($('eaValTp2')) $('eaValTp2').textContent = plan.tp2 ? `$${Number(plan.tp2).toFixed(2)}` : '--';
+      if ($('eaRiskLotLine')) $('eaRiskLotLine').textContent = rg.rule_km || '--';
+      this._updateProjectedUsd(r);
+
+      if ($('eaRowTrend')) $('eaRowTrend').textContent = `• ${g.trend_km || '--'}`;
+      if ($('eaRowEntry')) $('eaRowEntry').textContent = `• ${g.entry_km || '--'}`;
+      if ($('eaRowAvoid')) $('eaRowAvoid').textContent = `• ${g.avoid_km || '--'}`;
+      if ($('eaRowProfitStop')) $('eaRowProfitStop').textContent = `• ${g.profit_stop_km || '--'}`;
+      if ($('eaRowLossStop')) $('eaRowLossStop').textContent = `• ${g.loss_stop_km || '--'}`;
     }
-    if (bar) bar.style.width = `${Math.max(10, Math.min(100, Number(r.confidence || 0)))}%`;
-    if ($('eaVerdictSub')) $('eaVerdictSub').textContent = r.sub_km || '--';
 
-    if ($('eaRrBadge')) $('eaRrBadge').textContent = `R:R ${plan.rr || '--'}`;
-    if ($('eaValEntry')) $('eaValEntry').textContent = plan.entry ? `$${Number(plan.entry).toFixed(2)}` : '--';
-    if ($('eaValSl')) $('eaValSl').textContent = plan.sl ? `$${Number(plan.sl).toFixed(2)}` : '--';
-    if ($('eaValBe')) $('eaValBe').textContent = plan.be_trigger ? `$${Number(plan.be_trigger).toFixed(2)}` : '--';
-    if ($('eaValTp1')) $('eaValTp1').textContent = plan.tp1 ? `$${Number(plan.tp1).toFixed(2)}` : '--';
-    if ($('eaValTrail')) $('eaValTrail').textContent = plan.trailing_stop ? `$${Number(plan.trailing_stop).toFixed(2)}` : '--';
-    if ($('eaValTp2')) $('eaValTp2').textContent = plan.tp2 ? `$${Number(plan.tp2).toFixed(2)}` : '--';
-    this._updateProjectedUsd(r);
-
-    if ($('eaRowTrend')) $('eaRowTrend').textContent = g.trend_km || '--';
-    if ($('eaRowEntry')) $('eaRowEntry').textContent = g.entry_km || '--';
-    if ($('eaRowAvoid')) $('eaRowAvoid').textContent = g.avoid_km || '--';
-    if ($('eaRowProfitStop')) $('eaRowProfitStop').textContent = g.profit_stop_km || '--';
-    if ($('eaRowLossStop')) $('eaRowLossStop').textContent = g.loss_stop_km || '--';
-
-    if ($('eaSweepBadge')) $('eaSweepBadge').textContent = inst.sweep_km || '--';
-    if ($('eaMatPd')) {
-      $('eaMatPd').textContent = `${inst.pd_zone || '--'} (${inst.pd_pct ?? 50}%)`;
-      $('eaMatPd').className = `font-black ${inst.pd_zone === 'DISCOUNT' ? 'text-emerald-400' : inst.pd_zone === 'PREMIUM' ? 'text-rose-400' : 'text-amber-300'}`;
+    // F. Self-Learning Summary & 5-Day Backtest (បង្ហាញជានិច្ច ទាំងថ្ងៃបិទផ្សារ)
+    if ($('eaBrainIq')) $('eaBrainIq').textContent = `AI IQ ${lb.iq_level ?? 60}`;
+    if ($('eaBackendSummary')) {
+      $('eaBackendSummary').textContent = wknd
+        ? 'ផ្អាកការស្កេនផ្ទាល់ចុងសប្តាហ៍ — អ្នកអាចចុច «រត់តេស្ត ៥ ថ្ងៃ» ខាងលើដើម្បីហ្វឹកហាត់ខួរក្បាលទុកមុន។'
+        : (r.backend_summary_km || '--');
     }
-    if ($('eaMatVwap')) $('eaMatVwap').textContent = `$${Number(inst.vwap || 0).toFixed(0)} / $${Number(inst.poc || 0).toFixed(0)}`;
-    if ($('eaMatCvd')) $('eaMatCvd').textContent = inst.cvd_div && inst.cvd_div !== 'NONE' ? inst.cvd_div : `${inst.cvd_pct ?? 50}%`;
-    if ($('eaMatSmt')) $('eaMatSmt').textContent = `${inst.smt && inst.smt !== 'NONE' ? inst.smt : 'OK'} • ${inst.mtf_aligned || 'MIX'}`;
 
     const rList = $('eaReasonsList');
     if (rList) {
-      const reasons = Array.isArray(r.reasons) ? r.reasons : [];
-      rList.innerHTML = reasons.map((txt) => `<div class="flex items-center gap-1.5"><span class="text-cyan-400">▸</span><span>${escHtml(txt)}</span></div>`).join('');
+      const reasons = (!wknd && Array.isArray(r.reasons)) ? r.reasons : [];
+      rList.innerHTML = reasons.map((txt) => `<div>▸ ${escHtml(txt)}</div>`).join('');
     }
 
-    if ($('eaBrainIq')) $('eaBrainIq').textContent = `IQ ${lb.iq_level ?? 60}`;
     if ($('eaPatternStatus')) {
-      $('eaPatternStatus').textContent = `បទពិសោធន៍ទម្រង់នេះ៖ ${pm.status_km || 'កំពុងសិក្សា'}`;
-      $('eaPatternStatus').className = pm.blacklisted
-        ? 'rounded-lg bg-rose-500/20 border border-rose-400/50 px-2 py-1 text-[9.5px] font-black text-rose-200'
-        : pm.boosted
-          ? 'rounded-lg bg-emerald-500/20 border border-emerald-400/50 px-2 py-1 text-[9.5px] font-black text-emerald-200'
-          : 'rounded-lg bg-white/[.04] border border-white/10 px-2 py-1 text-[9.5px] font-bold text-gray-100';
+      $('eaPatternStatus').textContent = wknd
+        ? 'ស្ថានភាពខួរក្បាល៖ រួចរាល់សម្រាប់ផ្សារបើកថ្ងៃច័ន្ទ 05:00 ព្រឹក'
+        : `បទពិសោធន៍ទម្រង់នេះ៖ ${pm.status_km || '--'}`;
+      $('eaPatternStatus').className = (!wknd && pm.blacklisted)
+        ? 'font-black text-rose-400 pt-1'
+        : (!wknd && pm.boosted)
+          ? 'font-black text-emerald-400 pt-1'
+          : 'font-bold text-gray-100 pt-1';
     }
-    if ($('eaMemWl')) $('eaMemWl').textContent = `${lb.total_wins ?? 0} / ${lb.total_losses ?? 0}`;
-    if ($('eaMemWr')) $('eaMemWr').textContent = lb.win_rate != null ? `${lb.win_rate}%` : 'ថ្មី';
-    if ($('eaMemBlocked')) $('eaMemBlocked').textContent = `${lb.mistakes_blocked ?? 0}`;
-    if ($('eaMemPats')) $('eaMemPats').textContent = `${lb.patterns_learned ?? 0}`;
+
+    if ($('eaMemLine')) {
+      const wrTxt = lb.win_rate != null ? `${lb.win_rate}%` : 'ថ្មី';
+      $('eaMemLine').textContent = `ស្ថិតិរៀនពិត៖ ឈ្នះ ${lb.total_wins ?? 0} / ខាត ${lb.total_losses ?? 0} (${wrTxt}) • ប្លុកកំហុស ${lb.mistakes_blocked ?? 0} ដង • រៀនបាន ${lb.patterns_learned ?? 0} ទម្រង់`;
+    }
 
     const lList = $('eaLessonsList');
     if (lList) {
       const lessons = Array.isArray(lb.recent_lessons) ? lb.recent_lessons : [];
-      if (!lessons.length) {
-        lList.innerHTML = `<div class="text-gray-400 text-center py-1">ខួរក្បាលកំពុងតាមដានជើង 5m ផ្ទាល់ ដើម្បីរៀន និងកត់ត្រាមេរៀនស្វ័យប្រវត្តិ...</div>`;
-      } else {
-        lList.innerHTML = lessons.map((it) => {
-          const isW = it.result === 'WIN';
-          const cls = isW ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200' : 'border-rose-400/35 bg-rose-500/10 text-rose-200';
-          return `<div class="rounded-lg border px-2 py-1 flex items-center justify-between gap-2 ${cls}">
-            <span class="truncate font-semibold">${escHtml(it.lesson_km)}</span>
-            <span class="shrink-0 text-[8.5px] opacity-80 tabular-nums">${escHtml(it.time_kh)}</span>
-          </div>`;
-        }).join('');
-      }
+      lList.innerHTML = lessons.length
+        ? lessons.map((it) => {
+            const col = it.result === 'WIN' ? 'text-emerald-300' : 'text-rose-300';
+            return `<div class="${col}">• [${escHtml(it.time_kh)}] ${escHtml(it.lesson_km)}</div>`;
+          }).join('')
+        : `<div class="text-gray-400">• ចុចប៊ូតុង «រត់តេស្ត ៥ ថ្ងៃ» ខាងលើ ដើម្បីហ្វឹកហាត់ខួរក្បាលទុកជាមុន!</div>`;
     }
 
     this._updateLiveTickStatus(this.lastPrice || toNum(r.price) || 0);
@@ -710,18 +856,23 @@ class ExpertAnalystModal {
     const bigEl = $('eaLiveBigPrice');
     if (bigEl) {
       bigEl.textContent = `$${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      if (this.prevPrice !== null && price !== this.prevPrice) {
+      if (!isForexWeekendUTC() && this.prevPrice !== null && price !== this.prevPrice) {
         bigEl.className = price > this.prevPrice
-          ? 'text-base sm:text-lg font-black text-emerald-400 tracking-tight transition-colors'
-          : 'text-base sm:text-lg font-black text-rose-400 tracking-tight transition-colors';
+          ? 'text-lg sm:text-xl font-black text-emerald-400 tracking-tight transition-colors'
+          : 'text-lg sm:text-xl font-black text-rose-400 tracking-tight transition-colors';
       }
     }
 
     const chEl = $('eaLiveChange');
-    if (chEl && Number.isFinite(this.lastChange)) {
-      const sign = this.lastChange >= 0 ? '+' : '';
-      chEl.textContent = `${sign}${this.lastChange.toFixed(2)} (${sign}${this.lastChangePct.toFixed(2)}%)`;
-      chEl.className = `text-[9.5px] font-bold ${this.lastChange >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+    if (chEl) {
+      if (isForexWeekendUTC()) {
+        chEl.textContent = 'Market Closed';
+        chEl.className = 'text-[10px] font-bold text-amber-300';
+      } else if (Number.isFinite(this.lastChange)) {
+        const sign = this.lastChange >= 0 ? '+' : '';
+        chEl.textContent = `${sign}${this.lastChange.toFixed(2)} (${sign}${this.lastChangePct.toFixed(2)}%)`;
+        chEl.className = `text-[10px] font-bold ${this.lastChange >= 0 ? 'text-emerald-400' : 'text-rose-400'}`;
+      }
     }
 
     const baEl = $('eaLiveBidAsk');
@@ -732,6 +883,8 @@ class ExpertAnalystModal {
       baEl.textContent = `Bid $${b.toFixed(2)} • Ask $${a.toFixed(2)} • Spd $${sp.toFixed(2)}`;
     }
 
+    if (isForexWeekendUTC()) return;
+
     const pnlEl = $('eaLivePnlBadge');
     const r = this.lastReport;
     if (!pnlEl || !r?.plan) return;
@@ -739,7 +892,7 @@ class ExpertAnalystModal {
     if (!r.can_execute) {
       const ent = toNum(r.plan.entry);
       pnlEl.textContent = ent !== null ? `ចម្ងាយ $${Math.abs(price - ent).toFixed(2)}` : 'WAIT';
-      pnlEl.className = 'font-black text-sky-300';
+      pnlEl.className = 'text-[11px] font-black text-sky-300';
       return;
     }
 
@@ -748,7 +901,7 @@ class ExpertAnalystModal {
     const costPips = (Math.max(0, directFeed.getSpread()) * 10.0) + COMM_PIPS;
     const netUsd = ((fav * 10.0) - costPips) * (this.auditLot * 10.0);
     pnlEl.textContent = `Net ${netUsd >= 0 ? '+' : ''}$${netUsd.toFixed(2)}`;
-    pnlEl.className = `font-black ${netUsd > 0 ? 'text-emerald-400' : netUsd < 0 ? 'text-rose-400' : 'text-gray-200'}`;
+    pnlEl.className = `text-[11px] font-black ${netUsd > 0 ? 'text-emerald-400' : netUsd < 0 ? 'text-rose-400' : 'text-gray-200'}`;
   }
 
   async _copyField(field, btnEl) {
